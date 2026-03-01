@@ -25,28 +25,23 @@
     add(MONEY_RE, 'MONEY');
     add(ORG_RE, 'ORG');
 
-    // Acronyms
     const aRe = /\b[A-Z]{2,5}\b/g;
     let m;
     while ((m = aRe.exec(text)) !== null)
       if (!ACRONYM_SKIP.has(m[0])) res.push({ start: m.index, end: m.index + m[0].length, type: 'ORG' });
 
-    // Persons
     const pRe = /\b([A-Z][a-z]{1,15})(?:\s+[A-Z][a-z]{1,15}){1,3}\b/g;
     while ((m = pRe.exec(text)) !== null)
       if (FIRST_NAMES.has(m[0].split(' ')[0])) res.push({ start: m.index, end: m.index + m[0].length, type: 'PERSON' });
 
-    // Countries
     COUNTRIES.forEach(c => {
       const re = new RegExp(`\\b${c.replace(/\s/g, '\\s+')}\\b`, 'g');
       while ((m = re.exec(text)) !== null) res.push({ start: m.index, end: m.index + m[0].length, type: 'LOCATION' });
     });
 
-    // Geo suffixes
     GEO_RE.lastIndex = 0;
     while ((m = GEO_RE.exec(text)) !== null) res.push({ start: m.index, end: m.index + m[0].length, type: 'LOCATION' });
 
-    // Sort & dedup
     res.sort((a, b) => a.start - b.start || b.end - a.end);
     const out = []; let last = -1;
     for (const r of res) { if (r.start >= last) { out.push(r); last = r.end; } }
@@ -71,11 +66,44 @@
       #ner-bm-menu span{color:#fff;font-size:12px;font-weight:600}
       #ner-bm-menu button{padding:3px 9px;border:none;border-radius:4px;background:#e74c3c;color:#fff;font-size:11px;font-weight:700;cursor:pointer}
       mark.ner-bm-label{background:inherit;color:inherit;border-radius:3px;padding:0 2px;cursor:pointer}
+
+      /* ── annotations panel (bottom sheet) ── */
+      #ner-bm-panel{
+        position:fixed!important;z-index:2147483646!important;bottom:0!important;left:0!important;right:0!important;
+        background:#1a1a2e;color:#eee;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;
+        box-shadow:0 -4px 24px rgba(0,0,0,.6);border-radius:14px 14px 0 0;
+        max-height:60vh;display:flex;flex-direction:column;transition:transform .25s ease}
+      #ner-bm-panel.collapsed{transform:translateY(calc(100% - 44px))}
+      #ner-bm-panel-header{
+        display:flex;align-items:center;gap:10px;padding:10px 14px;cursor:pointer;user-select:none;flex-shrink:0;
+        border-bottom:1px solid #2a2a4a}
+      #ner-bm-panel-header h3{margin:0;font-size:13px;font-weight:700;flex:1;color:#fff}
+      #ner-bm-panel-header .ner-bm-badge{
+        background:#3d5af1;color:#fff;border-radius:10px;padding:2px 8px;font-size:11px;font-weight:700}
+      #ner-bm-panel-header .ner-bm-toggle{color:#667;font-size:14px;transition:transform .2s}
+      #ner-bm-panel:not(.collapsed) #ner-bm-panel-header .ner-bm-toggle{transform:rotate(180deg)}
+      #ner-bm-panel-actions{display:flex;gap:8px;padding:8px 14px;flex-shrink:0;border-bottom:1px solid #1e1e3a}
+      #ner-bm-panel-actions button{
+        padding:6px 14px;border:none;border-radius:6px;font-size:12px;font-weight:700;cursor:pointer}
+      #ner-bm-panel-body{overflow-y:auto;padding:10px 14px 14px;flex:1}
+      .ner-bm-group{margin-bottom:12px}
+      .ner-bm-group-header{
+        display:flex;align-items:center;gap:8px;margin-bottom:6px;cursor:pointer;padding:4px 0}
+      .ner-bm-group-dot{width:10px;height:10px;border-radius:50%;flex-shrink:0}
+      .ner-bm-group-name{font-size:12px;font-weight:700;text-transform:uppercase;letter-spacing:.6px}
+      .ner-bm-group-count{font-size:11px;color:#667;margin-left:auto}
+      .ner-bm-chips{display:flex;flex-wrap:wrap;gap:5px}
+      .ner-bm-chip{
+        display:inline-flex;align-items:center;gap:4px;padding:3px 8px;border-radius:4px;
+        font-size:11px;cursor:pointer;border:1px solid transparent;transition:opacity .15s}
+      .ner-bm-chip:hover{opacity:.8}
+      .ner-bm-chip .ner-rm{font-size:10px;opacity:.6;margin-left:2px}
+      .ner-bm-empty{color:#445;font-size:12px;text-align:center;padding:16px 0}
     `;
     document.head.appendChild(style);
   }
 
-  /* ── floating toolbar (manual selection) ── */
+  /* ── floating toolbar ── */
   let currentRange = null;
 
   function buildToolbar() {
@@ -107,7 +135,7 @@
     const clearBtn = document.createElement('button');
     clearBtn.textContent = 'Clear';
     clearBtn.style.cssText = 'background:#444;color:#fff';
-    clearBtn.addEventListener('click', clearHighlights);
+    clearBtn.addEventListener('click', () => { clearHighlights(); refreshPanel(); });
     t.appendChild(clearBtn);
 
     document.documentElement.appendChild(t);
@@ -117,6 +145,158 @@
   function contrast(hex) {
     const r = parseInt(hex.slice(1,3),16), g = parseInt(hex.slice(3,5),16), b = parseInt(hex.slice(5,7),16);
     return (0.299*r+0.587*g+0.114*b)/255 > 0.55 ? '#000' : '#fff';
+  }
+
+  /* ── annotations panel (bottom sheet) ── */
+  function buildPanel() {
+    if (document.getElementById('ner-bm-panel')) return;
+    const panel = document.createElement('div');
+    panel.id = 'ner-bm-panel';
+    panel.classList.add('collapsed');
+
+    // header (tap to expand/collapse)
+    panel.innerHTML = `
+      <div id="ner-bm-panel-header">
+        <h3>Annotations</h3>
+        <span class="ner-bm-badge" id="ner-bm-total">0</span>
+        <span class="ner-bm-toggle">▲</span>
+      </div>
+      <div id="ner-bm-panel-actions">
+        <button id="ner-bm-export" style="background:#3d5af1;color:#fff">Export JSON</button>
+        <button id="ner-bm-copy"   style="background:#2ecc71;color:#000">Copy JSON</button>
+        <button id="ner-bm-dedup"  style="background:#444;color:#fff">Dedup</button>
+      </div>
+      <div id="ner-bm-panel-body">
+        <p class="ner-bm-empty">No annotations yet — tap Scan.</p>
+      </div>
+    `;
+    document.documentElement.appendChild(panel);
+
+    panel.querySelector('#ner-bm-panel-header').addEventListener('click', () => {
+      panel.classList.toggle('collapsed');
+    });
+    panel.querySelector('#ner-bm-export').addEventListener('click', exportJSON);
+    panel.querySelector('#ner-bm-copy').addEventListener('click', copyJSON);
+    panel.querySelector('#ner-bm-dedup').addEventListener('click', dedupHighlights);
+  }
+
+  function collectAnnotations() {
+    const marks = document.querySelectorAll('mark.ner-bm-label');
+    return Array.from(marks).map(m => ({ text: m.textContent.trim(), type: m.dataset.entity }));
+  }
+
+  function refreshPanel() {
+    const body = document.getElementById('ner-bm-panel-body');
+    const totalBadge = document.getElementById('ner-bm-total');
+    if (!body) return;
+
+    const annotations = collectAnnotations();
+    totalBadge.textContent = annotations.length;
+
+    if (!annotations.length) {
+      body.innerHTML = '<p class="ner-bm-empty">No annotations yet — tap Scan.</p>';
+      return;
+    }
+
+    // group by type, dedup display per group
+    const groups = {};
+    annotations.forEach(a => {
+      if (!groups[a.type]) groups[a.type] = [];
+      groups[a.type].push(a.text);
+    });
+
+    body.innerHTML = '';
+    const typeOrder = ['PERSON', 'ORG', 'LOCATION', 'DATE', 'MONEY'];
+    const orderedTypes = [...typeOrder.filter(t => groups[t]), ...Object.keys(groups).filter(t => !typeOrder.includes(t))];
+
+    orderedTypes.forEach(type => {
+      const items = groups[type];
+      const color = COLORS[type] || '#aaa';
+      const group = document.createElement('div');
+      group.className = 'ner-bm-group';
+
+      const header = document.createElement('div');
+      header.className = 'ner-bm-group-header';
+      header.innerHTML = `<span class="ner-bm-group-dot" style="background:${color}"></span>
+        <span class="ner-bm-group-name" style="color:${color}">${type}</span>
+        <span class="ner-bm-group-count">${items.length}</span>`;
+      group.appendChild(header);
+
+      const chips = document.createElement('div');
+      chips.className = 'ner-bm-chips';
+      // show unique texts, with a count badge if repeated
+      const counts = {};
+      items.forEach(t => { counts[t] = (counts[t] || 0) + 1; });
+      Object.entries(counts).forEach(([text, count]) => {
+        const chip = document.createElement('span');
+        chip.className = 'ner-bm-chip';
+        chip.style.cssText = `background:${color}22;border-color:${color}55;color:#ddd`;
+        chip.innerHTML = `${escHtml(text)}${count > 1 ? `<span class="ner-rm">×${count}</span>` : ''}`;
+        chip.title = `Click to scroll to first occurrence`;
+        chip.addEventListener('click', () => scrollToEntity(text, type));
+        chips.appendChild(chip);
+      });
+      group.appendChild(chips);
+      body.appendChild(group);
+    });
+
+    // auto-expand panel when scan populates it
+    const panel = document.getElementById('ner-bm-panel');
+    if (panel && panel.classList.contains('collapsed') && annotations.length > 0) {
+      panel.classList.remove('collapsed');
+    }
+  }
+
+  function escHtml(s) {
+    return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+  }
+
+  function scrollToEntity(text, type) {
+    const mark = Array.from(document.querySelectorAll('mark.ner-bm-label'))
+      .find(m => m.textContent.trim() === text && m.dataset.entity === type);
+    if (mark) mark.scrollIntoView({ behavior: 'smooth', block: 'center' });
+  }
+
+  function buildExportData() {
+    return {
+      url: location.href,
+      title: document.title,
+      scannedAt: new Date().toISOString(),
+      annotations: collectAnnotations()
+    };
+  }
+
+  function exportJSON() {
+    const data = JSON.stringify(buildExportData(), null, 2);
+    const blob = new Blob([data], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `ner-${Date.now()}.json`;
+    a.click();
+    URL.revokeObjectURL(url);
+  }
+
+  function copyJSON() {
+    const data = JSON.stringify(buildExportData(), null, 2);
+    navigator.clipboard.writeText(data).then(() => {
+      const btn = document.getElementById('ner-bm-copy');
+      if (!btn) return;
+      const orig = btn.textContent;
+      btn.textContent = 'Copied!';
+      setTimeout(() => { btn.textContent = orig; }, 1500);
+    });
+  }
+
+  function dedupHighlights() {
+    // remove duplicate marks keeping only first occurrence per (text+type) pair
+    const seen = new Set();
+    document.querySelectorAll('mark.ner-bm-label').forEach(m => {
+      const key = m.textContent.trim() + '|' + m.dataset.entity;
+      if (seen.has(key)) unlabel(m);
+      else seen.add(key);
+    });
+    refreshPanel();
   }
 
   /* ── label application ── */
@@ -133,6 +313,7 @@
     } catch (_) {}
     window.getSelection().removeAllRanges();
     currentRange = null;
+    refreshPanel();
   }
 
   function showRemoveMenu(span, e) {
@@ -140,7 +321,7 @@
     const menu = document.createElement('div');
     menu.id = 'ner-bm-menu';
     menu.innerHTML = `<span>${span.dataset.entity}</span><button>Remove</button>`;
-    menu.querySelector('button').addEventListener('click', () => { unlabel(span); hideRemoveMenu(); });
+    menu.querySelector('button').addEventListener('click', () => { unlabel(span); hideRemoveMenu(); refreshPanel(); });
     document.documentElement.appendChild(menu);
     const r = span.getBoundingClientRect();
     menu.style.top  = (r.bottom + window.scrollY + 4) + 'px';
@@ -156,6 +337,7 @@
 
   function unlabel(span) {
     const p = span.parentNode;
+    if (!p) return;
     while (span.firstChild) p.insertBefore(span.firstChild, span);
     p.removeChild(span);
     p.normalize();
@@ -167,7 +349,7 @@
 
   /* ── selection listeners ── */
   document.addEventListener('mouseup', e => {
-    if (e.target.closest('#ner-bm-toolbar,#ner-bm-menu')) return;
+    if (e.target.closest('#ner-bm-toolbar,#ner-bm-menu,#ner-bm-panel')) return;
     setTimeout(() => {
       const sel = window.getSelection();
       if (!sel || sel.isCollapsed || !sel.toString().trim()) return;
@@ -175,7 +357,7 @@
     }, 10);
   });
   document.addEventListener('touchend', e => {
-    if (e.target.closest('#ner-bm-toolbar,#ner-bm-menu')) return;
+    if (e.target.closest('#ner-bm-toolbar,#ner-bm-menu,#ner-bm-panel')) return;
     setTimeout(() => {
       const sel = window.getSelection();
       if (!sel || sel.isCollapsed || !sel.toString().trim()) return;
@@ -192,7 +374,7 @@
       acceptNode(node) {
         const p = node.parentElement;
         if (!p || SKIP_TAGS.has(p.tagName)) return NodeFilter.FILTER_REJECT;
-        if (p.closest('mark.ner-bm-label,#ner-bm-toolbar,#ner-bm-menu')) return NodeFilter.FILTER_REJECT;
+        if (p.closest('mark.ner-bm-label,#ner-bm-toolbar,#ner-bm-menu,#ner-bm-panel')) return NodeFilter.FILTER_REJECT;
         if (node.textContent.trim().length < 3) return NodeFilter.FILTER_SKIP;
         return NodeFilter.FILTER_ACCEPT;
       }
@@ -235,15 +417,20 @@
         const matches = detect(node.textContent);
         if (matches.length) highlightTextNode(node, matches);
       }
-      if (i < nodes.length) requestAnimationFrame(batch);
+      if (i < nodes.length) {
+        requestAnimationFrame(batch);
+      } else {
+        // scan complete — populate annotations panel
+        refreshPanel();
+      }
     }
     requestAnimationFrame(batch);
   }
 
   /* ── boot ── */
   buildToolbar();
+  buildPanel();
   runScan();
 
-  // expose for re-tap
   window.__nerBMRescan = () => { clearHighlights(); runScan(); };
 })();
