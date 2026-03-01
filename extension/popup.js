@@ -5,7 +5,7 @@ const DEFAULT_ENTITIES = [
   { name: 'ORG',      color: '#3498db' },
   { name: 'LOCATION', color: '#2ecc71' },
   { name: 'DATE',     color: '#f39c12' },
-  { name: 'EVENT',    color: '#9b59b6' }
+  { name: 'MONEY',    color: '#9b59b6' }
 ];
 
 let entities = [];
@@ -73,7 +73,19 @@ document.getElementById('btn-export').addEventListener('click', () => {
 document.getElementById('btn-clear').addEventListener('click', () => {
   if (!confirm('Clear ALL annotations?')) return;
   chrome.storage.local.remove('nerAnnotations', renderStats);
+  sendToTab({ action: 'clearHighlights' });
 });
+
+document.getElementById('btn-rescan').addEventListener('click', () => {
+  sendToTab({ action: 'rescan' });
+  window.close();
+});
+
+function sendToTab(msg) {
+  chrome.tabs.query({ active: true, currentWindow: true }, tabs => {
+    if (tabs[0]) chrome.tabs.sendMessage(tabs[0].id, msg);
+  });
+}
 
 // init
 chrome.storage.local.get('nerEntities', r => {
