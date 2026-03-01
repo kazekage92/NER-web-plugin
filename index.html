@@ -5,8 +5,56 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>NER Entity Labeling Plugin</title>
   <link rel="stylesheet" href="src/ner-labeler.css" />
+  <style>
+    .bookmarklet-bar {
+      background: #0f0f1a;
+      border-bottom: 1px solid #1e1e3a;
+      padding: 10px 20px;
+      display: flex;
+      align-items: center;
+      gap: 14px;
+      flex-wrap: wrap;
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+    }
+    .bookmarklet-bar span {
+      color: #667;
+      font-size: 12px;
+    }
+    .bookmarklet-link {
+      display: inline-block;
+      padding: 7px 16px;
+      background: #3d5af1;
+      color: #fff !important;
+      text-decoration: none;
+      border-radius: 7px;
+      font-size: 12px;
+      font-weight: 700;
+      border: 2px dashed #7a94f5;
+      cursor: grab;
+      white-space: nowrap;
+    }
+    .bookmarklet-link:hover { background: #2d4ad1; }
+    .bookmarklet-hint {
+      color: #445;
+      font-size: 11px;
+    }
+  </style>
 </head>
 <body>
+  <!-- Bookmarklet install bar -->
+  <div class="bookmarklet-bar">
+    <span>📌 Use on any website:</span>
+    <a class="bookmarklet-link" id="bm-link" title="Drag to bookmarks bar, or tap and add to bookmarks on mobile">NER Auto-Label</a>
+    <span class="bookmarklet-hint">Drag to bookmarks bar (desktop) · On mobile: tap &amp; hold → Add to bookmarks</span>
+  </div>
+  <script>
+    (function() {
+      var src = 'https://kazekage92.github.io/NER-web-plugin/bookmarklet.js';
+      var code = 'javascript:(function(){if(window.__nerBMLoaded){window.__nerBMRescan&&window.__nerBMRescan();return;}var s=document.createElement("script");s.src="' + src + '?t="+Date.now();document.head.appendChild(s);})()';
+      document.getElementById('bm-link').href = code;
+    })();
+  </script>
+
   <div id="app">
     <!-- Header -->
     <header class="app-header">
