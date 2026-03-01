@@ -1,0 +1,13 @@
+{
+  "name": "ner-web-plugin",
+  "version": "1.0.0",
+  "description": "A browser-based Named Entity Recognition (NER) entity labeling plugin",
+  "main": "src/ner-labeler.js",
+  "scripts": {
+    "start": "npx serve .",
+    "test": "echo \"No tests configured\" && exit 0"
+  },
+  "keywords": ["NER", "named-entity-recognition", "annotation", "labeling", "nlp"],
+  "author": "kazekage92",
+  "license": "MIT"
+}

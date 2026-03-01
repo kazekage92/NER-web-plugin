@@ -1,0 +1,122 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>NER Entity Labeling Plugin</title>
+  <link rel="stylesheet" href="src/ner-labeler.css" />
+</head>
+<body>
+  <div id="app">
+    <!-- Header -->
+    <header class="app-header">
+      <h1 class="app-title">NER Entity Labeling Plugin</h1>
+      <div class="header-actions">
+        <button id="btn-import" class="btn btn-secondary" title="Import JSON">Import</button>
+        <button id="btn-export" class="btn btn-primary" title="Export labeled data">Export JSON</button>
+        <input type="file" id="import-file" accept=".json" style="display:none" />
+      </div>
+    </header>
+
+    <main class="app-main">
+      <!-- Left Panel: Entity Types -->
+      <aside class="panel panel-left">
+        <div class="panel-header">
+          <h2>Entity Types</h2>
+        </div>
+        <div class="entity-types-list" id="entity-types-list"></div>
+        <div class="add-entity-form">
+          <input
+            type="text"
+            id="new-entity-name"
+            class="input-field"
+            placeholder="Entity name (e.g. PERSON)"
+            maxlength="30"
+          />
+          <input type="color" id="new-entity-color" class="input-color" value="#4A90D9" title="Pick color" />
+          <button id="btn-add-entity" class="btn btn-add">Add</button>
+        </div>
+
+        <div class="panel-section">
+          <h3>Keyboard Shortcuts</h3>
+          <ul class="shortcuts-list">
+            <li><kbd>Ctrl</kbd>+<kbd>Z</kbd> Undo last label</li>
+            <li><kbd>Del</kbd> Remove selected label</li>
+            <li><kbd>Esc</kbd> Deselect</li>
+          </ul>
+        </div>
+      </aside>
+
+      <!-- Center Panel: Text Editor -->
+      <section class="panel panel-center">
+        <div class="panel-header">
+          <h2>Document</h2>
+          <div class="doc-controls">
+            <span class="doc-status" id="doc-status">No document loaded</span>
+            <button id="btn-clear-text" class="btn btn-ghost btn-sm">Clear</button>
+            <button id="btn-clear-labels" class="btn btn-ghost btn-sm btn-danger">Clear Labels</button>
+          </div>
+        </div>
+
+        <!-- Text input mode -->
+        <div id="text-input-mode" class="text-input-mode">
+          <textarea
+            id="raw-text-input"
+            class="raw-text-input"
+            placeholder="Paste or type text here, then click 'Start Labeling'…"
+            spellcheck="false"
+          ></textarea>
+          <div class="text-input-footer">
+            <span id="char-count" class="char-count">0 characters</span>
+            <button id="btn-start-labeling" class="btn btn-primary">Start Labeling</button>
+          </div>
+        </div>
+
+        <!-- Labeling mode -->
+        <div id="labeling-mode" class="labeling-mode hidden">
+          <div class="active-entity-bar">
+            <span class="active-entity-label">Active Entity:</span>
+            <span id="active-entity-badge" class="active-entity-badge">None selected</span>
+            <span class="tip">Select an entity type on the left, then highlight text to label it.</span>
+          </div>
+          <div
+            id="text-display"
+            class="text-display"
+            spellcheck="false"
+          ></div>
+          <div class="labeling-footer">
+            <button id="btn-edit-text" class="btn btn-ghost btn-sm">Edit Text</button>
+          </div>
+        </div>
+      </section>
+
+      <!-- Right Panel: Annotations list -->
+      <aside class="panel panel-right">
+        <div class="panel-header">
+          <h2>Annotations</h2>
+          <span id="annotation-count" class="badge">0</span>
+        </div>
+        <div class="annotations-list" id="annotations-list">
+          <p class="empty-msg">No annotations yet.</p>
+        </div>
+      </aside>
+    </main>
+  </div>
+
+  <!-- Tooltip -->
+  <div id="entity-tooltip" class="entity-tooltip hidden"></div>
+
+  <!-- Confirm dialog -->
+  <div id="confirm-overlay" class="confirm-overlay hidden">
+    <div class="confirm-dialog">
+      <p id="confirm-message"></p>
+      <div class="confirm-actions">
+        <button id="confirm-ok" class="btn btn-danger">Confirm</button>
+        <button id="confirm-cancel" class="btn btn-ghost">Cancel</button>
+      </div>
+    </div>
+  </div>
+
+  <script src="src/ner-labeler.js"></script>
+</body>
+</html>
