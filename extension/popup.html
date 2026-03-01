@@ -68,6 +68,12 @@
       font-weight: 600; cursor: pointer; margin-top: 6px;
     }
     .btn-clear-all:hover { background: #e74c3c22; }
+    .btn-rescan {
+      width: 100%; padding: 8px; background: #1a1a2e; color: #3498db;
+      border: 1px solid #3498db55; border-radius: 6px; font-size: 12px;
+      font-weight: 600; cursor: pointer; margin-top: 6px;
+    }
+    .btn-rescan:hover { background: #3498db22; }
 
     .empty { color: #445; font-size: 12px; font-style: italic; }
   </style>
@@ -92,7 +98,8 @@
     <h2>Annotations</h2>
     <p class="stat" id="stat">Loading…</p>
     <button class="btn-export" id="btn-export">Export JSON</button>
-    <button class="btn-clear-all" id="btn-clear">Clear All Annotations</button>
+    <button class="btn-rescan"    id="btn-rescan">Re-scan Page</button>
+    <button class="btn-clear-all" id="btn-clear">Clear All Highlights</button>
   </section>
 
   <script src="popup.js"></script>

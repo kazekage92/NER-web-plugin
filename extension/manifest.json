@@ -3,12 +3,12 @@
   "name": "NER Entity Labeler",
   "version": "1.0",
   "description": "Select text on any webpage and label named entities (PERSON, ORG, LOCATION…)",
-  "permissions": ["storage"],
+  "permissions": ["storage", "tabs"],
   "host_permissions": ["<all_urls>"],
   "content_scripts": [
     {
       "matches": ["<all_urls>"],
-      "js": ["content.js"],
+      "js": ["ner-engine.js", "content.js"],
       "css": ["content.css"],
       "run_at": "document_idle"
     }
