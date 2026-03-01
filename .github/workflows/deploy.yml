@@ -6,6 +6,9 @@ on:
       - main
       - claude/entity-labeling-plugin-QMO2f
 
+permissions:
+  contents: write
+
 jobs:
   deploy:
     runs-on: ubuntu-latest
