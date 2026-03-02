@@ -96,9 +96,15 @@ function bindEvents() {
     if (e.key === 'Enter') handleAddEntityType();
   });
 
-  // Text input
+  // Text input — update char count
   DOM.rawTextInput.addEventListener('input', () => {
     DOM.charCount.textContent = `${DOM.rawTextInput.value.length} characters`;
+  });
+
+  // Auto-scan as soon as text is pasted
+  DOM.rawTextInput.addEventListener('paste', () => {
+    // setTimeout 0: let the browser commit the pasted value first
+    setTimeout(handleAutoLabel, 0);
   });
 
   // Re-query the auto-label button at bind time (safe if DOM was captured before element existed)
