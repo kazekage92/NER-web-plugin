@@ -76,10 +76,6 @@ const DOM = {
 // ─────────────────────────────────────────────────────────────────────────────
 
 function init() {
-  console.log('[NER] init() started, btn-auto-label in DOM:',
-    !!document.getElementById('btn-auto-label'),
-    'DOM.btnAutoLabel:', DOM.btnAutoLabel);
-
   DEFAULT_ENTITY_TYPES.forEach(et => {
     state.entityTypes.push({ id: uid(), name: et.name, color: et.color });
   });
@@ -87,9 +83,6 @@ function init() {
   loadFromStorage();
   bindEvents();
   render();
-
-  console.log('[NER] init() complete, auto-label listener attached:',
-    !!(DOM.btnAutoLabel || document.getElementById('btn-auto-label')));
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -228,11 +221,7 @@ function autoDetectNER(text) {
 
 function handleAutoLabel() {
   const text = DOM.rawTextInput.value;
-  console.log('[NER Auto-Detect] clicked, text length:', text.length);
-  if (!text.trim()) {
-    console.warn('[NER Auto-Detect] textarea is empty — paste text first');
-    return;
-  }
+  if (!text.trim()) return;
 
   pushUndo();
   state.text = text;
@@ -254,7 +243,6 @@ function handleAutoLabel() {
     added++;
   });
 
-  console.log(`[NER Auto-Detect] found ${detections.length} candidates, added ${added} annotations`);
   render();
   saveToStorage();
 
