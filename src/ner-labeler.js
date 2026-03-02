@@ -1018,6 +1018,8 @@ function render() {
   renderAnnotationsList();
   updateDocStatus();
   saveToStorage();
+  // Draw relationship arcs after layout is committed
+  requestAnimationFrame(renderRelationshipArcs);
 }
 
 function renderEntityTypes() {
@@ -1280,6 +1282,220 @@ function clearLinkedHighlights() {
     el.classList.remove('linked-subject', 'linked-object');
     el.style.removeProperty('--link-color');
   });
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Relationship Arc Visualization — fixed SVG overlay
+// Draws a bracket-shaped arc above each Entity1 ●──[REL]──▶ Entity2 triplet
+// ─────────────────────────────────────────────────────────────────────────────
+
+function getOrCreateArcSvg() {
+  const NS = 'http://www.w3.org/2000/svg';
+  let svg = document.getElementById('rel-arc-svg');
+  if (!svg) {
+    svg = document.createElementNS(NS, 'svg');
+    svg.id = 'rel-arc-svg';
+    // Fixed so it renders over the text in viewport coords; pointer-events: none
+    // so all text interactions still work beneath it.
+    svg.setAttribute('style', [
+      'position:fixed', 'top:0', 'left:0',
+      'width:100vw', 'height:100vh',
+      'pointer-events:none', 'z-index:6',
+      'overflow:visible',
+    ].join(';'));
+    document.body.appendChild(svg);
+    // Redraw whenever the text scrolls or the window resizes
+    DOM.textDisplay.addEventListener('scroll', () => requestAnimationFrame(renderRelationshipArcs));
+    window.addEventListener('resize',          () => requestAnimationFrame(renderRelationshipArcs));
+  }
+  return svg;
+}
+
+/**
+ * Draws bracket-style arcs for every relationship annotation that has both a
+ * subject and an object entity.  Uses viewport coordinates from
+ * getBoundingClientRect so the arcs stay aligned with the text even after
+ * partial scrolls.  Called via requestAnimationFrame after every render() so
+ * layout is fully committed before we measure.
+ */
+function renderRelationshipArcs() {
+  const NS  = 'http://www.w3.org/2000/svg';
+  const svg = getOrCreateArcSvg();
+
+  // Clear previous arcs
+  [...svg.childNodes].forEach(n => n.remove());
+
+  if (state.mode !== 'labeling' || !state.relAnnotations.length) return;
+
+  const cRect = DOM.textDisplay.getBoundingClientRect();
+  const arcs  = [];
+
+  for (const relAnn of state.relAnnotations) {
+    if (!relAnn.subjectId || !relAnn.objectId) continue;
+    const rt    = state.relationshipTypes.find(r => r.id === relAnn.relTypeId);
+    const subEl = DOM.textDisplay.querySelector(`[data-ann-id="${relAnn.subjectId}"]`);
+    const objEl = DOM.textDisplay.querySelector(`[data-ann-id="${relAnn.objectId}"]`);
+    if (!rt || !subEl || !objEl) continue;
+
+    const sr = subEl.getBoundingClientRect();
+    const or = objEl.getBoundingClientRect();
+
+    // Skip entities that are fully outside the visible scroll area
+    if (sr.bottom < cRect.top || sr.top > cRect.bottom) continue;
+    if (or.bottom < cRect.top || or.top  > cRect.bottom) continue;
+
+    arcs.push({
+      id:       relAnn.id,
+      color:    rt.color,
+      label:    rt.name,
+      subX:     sr.left + sr.width  / 2,
+      subY:     Math.max(sr.top,  cRect.top),   // clamp to container top
+      objX:     or.left + or.width  / 2,
+      objY:     Math.max(or.top,  cRect.top),
+      selected: relAnn.id === state.selectedRelAnnId,
+    });
+  }
+
+  if (!arcs.length) return;
+
+  // ── Level assignment ──────────────────────────────────────────────────────
+  // Sort by span length so shorter arcs get lower (closer to text) levels,
+  // and assign levels greedily to avoid arcs crossing each other.
+  const LEVEL_H = 52;
+  arcs.sort((a, b) =>
+    (Math.abs(a.objX - a.subX) + Math.abs(a.objY - a.subY)) -
+    (Math.abs(b.objX - b.subX) + Math.abs(b.objY - b.subY))
+  );
+  const slots = [];  // slots[level] = [[xMin, xMax], ...]
+  arcs.forEach(arc => {
+    const lo = Math.min(arc.subX, arc.objX) - 6;
+    const hi = Math.max(arc.subX, arc.objX) + 6;
+    let lvl = 0;
+    for (; lvl < 20; lvl++) {
+      if (!slots[lvl] || !slots[lvl].some(([l, r]) => lo < r && hi > l)) break;
+    }
+    (slots[lvl] = slots[lvl] || []).push([lo, hi]);
+    arc.level = lvl;
+    arc.apexY = Math.max(
+      Math.min(arc.subY, arc.objY) - LEVEL_H * (lvl + 1),
+      cRect.top + 14    // never clip above the container
+    );
+  });
+
+  // Draw unselected first so selected arcs render on top
+  [...arcs.filter(a => !a.selected), ...arcs.filter(a => a.selected)]
+    .forEach(arc => _drawArc(svg, NS, arc));
+}
+
+/**
+ * Draws one bracket arc + label box + subject dot + object arrowhead into svg.
+ */
+function _drawArc(svg, NS, arc) {
+  const { subX, subY, objX, objY, apexY, color, label, selected } = arc;
+  const midX  = (subX + objX) / 2;
+  // Corner radius — capped so it never exceeds half the horizontal span
+  const R     = Math.max(0, Math.min(7, (Math.abs(objX - subX) / 2) - 1));
+  const SW    = selected ? 2.5 : 1.5;
+  const alpha = selected ? 1   : 0.8;
+
+  const g = document.createElementNS(NS, 'g');
+
+  // ── Bracket path ────────────────────────────────────────────────────────
+  // Normalise so leftX ≤ rightX, and track which end is the subject/object
+  const isSubLeft = subX <= objX;
+  const lx = isSubLeft ? subX : objX;
+  const rx = isSubLeft ? objX : subX;
+  const ly = isSubLeft ? subY : objY;   // y at the left connection point
+  const ry = isSubLeft ? objY : subY;   // y at the right connection point
+
+  let d;
+  if (rx - lx <= 2 * R + 2) {
+    // Entities too close — fall back to a smooth quadratic bump
+    d = `M ${lx} ${ly} Q ${midX} ${apexY} ${rx} ${ry}`;
+  } else {
+    d = [
+      `M ${lx} ${ly}`,
+      `L ${lx} ${apexY + R}`,
+      `Q ${lx} ${apexY} ${lx + R} ${apexY}`,
+      `L ${rx - R} ${apexY}`,
+      `Q ${rx} ${apexY} ${rx} ${apexY + R}`,
+      `L ${rx} ${ry}`,
+    ].join(' ');
+  }
+
+  const path = document.createElementNS(NS, 'path');
+  path.setAttribute('d', d);
+  path.setAttribute('fill', 'none');
+  path.setAttribute('stroke', color);
+  path.setAttribute('stroke-width', String(SW));
+  path.setAttribute('stroke-opacity', String(alpha));
+  g.appendChild(path);
+
+  // ── Subject — filled dot ────────────────────────────────────────────────
+  const dot = document.createElementNS(NS, 'circle');
+  dot.setAttribute('cx', String(subX));
+  dot.setAttribute('cy', String(subY));
+  dot.setAttribute('r', '3.5');
+  dot.setAttribute('fill', color);
+  dot.setAttribute('opacity', String(alpha));
+  g.appendChild(dot);
+
+  // ── Object — downward arrowhead ─────────────────────────────────────────
+  const AS = 4.5;
+  const tri = document.createElementNS(NS, 'polygon');
+  tri.setAttribute('points',
+    `${objX},${objY} ${objX - AS},${objY - AS * 1.7} ${objX + AS},${objY - AS * 1.7}`);
+  tri.setAttribute('fill', color);
+  tri.setAttribute('opacity', String(alpha));
+  g.appendChild(tri);
+
+  // ── Relationship label box ───────────────────────────────────────────────
+  const FONT = 10;
+  const PX   = 6;
+  const PY   = 3;
+  const LW   = Math.max(label.length * 6.3 + PX * 2, 36);
+  const LH   = FONT + PY * 2;
+  const bx   = midX - LW / 2;
+  const by   = apexY - LH / 2;
+
+  const rect = document.createElementNS(NS, 'rect');
+  rect.setAttribute('x', String(bx));
+  rect.setAttribute('y', String(by));
+  rect.setAttribute('width',  String(LW));
+  rect.setAttribute('height', String(LH));
+  rect.setAttribute('rx', '3');
+  rect.setAttribute('fill', color);
+  rect.setAttribute('opacity', selected ? '1' : '0.9');
+  g.appendChild(rect);
+
+  // White halo ring when selected
+  if (selected) {
+    const halo = document.createElementNS(NS, 'rect');
+    halo.setAttribute('x', String(bx - 2));
+    halo.setAttribute('y', String(by - 2));
+    halo.setAttribute('width',  String(LW + 4));
+    halo.setAttribute('height', String(LH + 4));
+    halo.setAttribute('rx', '4');
+    halo.setAttribute('fill', 'none');
+    halo.setAttribute('stroke', '#fff');
+    halo.setAttribute('stroke-width', '1.5');
+    g.appendChild(halo);
+  }
+
+  const txt = document.createElementNS(NS, 'text');
+  txt.setAttribute('x', String(midX));
+  txt.setAttribute('y', String(by + PY + FONT - 1));
+  txt.setAttribute('text-anchor', 'middle');
+  txt.setAttribute('font-size',   `${FONT}px`);
+  txt.setAttribute('font-family',
+    '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif');
+  txt.setAttribute('font-weight', '700');
+  txt.setAttribute('fill', contrastColor(color));
+  txt.setAttribute('pointer-events', 'none');
+  txt.textContent = label;
+  g.appendChild(txt);
+
+  svg.appendChild(g);
 }
 
 function renderAnnotationsList() {
