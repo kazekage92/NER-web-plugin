@@ -49,6 +49,7 @@ const DOM = {
   btnAddEntity:       $('btn-add-entity'),
   rawTextInput:       $('raw-text-input'),
   charCount:          $('char-count'),
+  btnAutoLabel:       $('btn-auto-label'),
   btnStartLabeling:   $('btn-start-labeling'),
   textInputMode:      $('text-input-mode'),
   labelingMode:       $('labeling-mode'),
@@ -100,6 +101,7 @@ function bindEvents() {
     DOM.charCount.textContent = `${DOM.rawTextInput.value.length} characters`;
   });
 
+  DOM.btnAutoLabel.addEventListener('click', handleAutoLabel);
   DOM.btnStartLabeling.addEventListener('click', handleStartLabeling);
   DOM.btnEditText.addEventListener('click', handleEditText);
 
@@ -155,6 +157,95 @@ function handleAddEntityType() {
   DOM.newEntityColor.value = randomColor();
   saveToStorage();
   render();
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Auto-Detect NER Engine
+// ─────────────────────────────────────────────────────────────────────────────
+
+const _NER_DATE_RE   = /\b(?:Jan(?:uary)?|Feb(?:ruary)?|Mar(?:ch)?|Apr(?:il)?|May|Jun(?:e)?|Jul(?:y)?|Aug(?:ust)?|Sep(?:tember)?|Oct(?:ober)?|Nov(?:ember)?|Dec(?:ember))\s+\d{1,2}(?:st|nd|rd|th)?,?\s*\d{4}\b|\b\d{1,2}[\/\-]\d{1,2}[\/\-]\d{2,4}\b|\b\d{4}[\/\-]\d{1,2}[\/\-]\d{1,2}\b|\b(?:Q[1-4]|H[12])\s+\d{4}\b/gi;
+const _NER_MONEY_RE  = /\$\s*[\d,]+(?:\.\d{1,2})?(?:\s*(?:million|billion|trillion|[MBT]))?\b|\b[\d,]+(?:\.\d{1,2})?\s*(?:million|billion|trillion)?\s*(?:USD|EUR|GBP|JPY|CAD|AUD|RM|MYR|SGD|HKD|dollars?|euros?|pounds?|yuan|yen|ringgit)\b/gi;
+const _NER_ORG_RE    = /\b(?:[A-Z][a-zA-Z&'\-]+(?:\s+[A-Z][a-zA-Z&'\-]+)*\s+(?:Inc\.?|Corp\.?|Ltd\.?|LLC|LLP|PLC|Co\.?|Company|Group|Holdings?|Foundation|Institute|University|College|School|Hospital|Bank|Fund|Trust|Association|Federation|Union|Alliance|Organization|Department|Agency|Bureau|Ministry|Commission|Council|Authority|Corporation|Industries|International|Global|National|Systems?|Solutions?|Technologies?|Services?|Networks?|Labs?|Media|Press|Times|Post|Capital|Berhad|Bhd\.?))\b/g;
+const _NER_GEO_RE    = /\b[A-Z][a-z]+(?:\s+[A-Z][a-z]+)*\s+(?:Street|Avenue|Boulevard|Road|Drive|Lane|Park|Square|Bridge|River|Lake|Sea|Ocean|Mountain|Bay|Island|Valley|Desert|Beach|Harbor|Port|Airport|Station|District|County|Province|Region|Territory|City|Town|Village|Gulf)\b/g;
+const _NER_ACRONYM_SKIP = new Set(['IS','IT','AN','IN','ON','AT','OR','TO','OF','AS','BY','SO','IF','UP','US','UK','EU','UN','WHO','HOW','WHY','THE','AND','FOR','BUT','NOT','ARE','WAS','HAS','NER','NLP','DATE','TIME','MISC','LOC','PER','ORG','GPE']);
+const _NER_FIRST_NAMES = new Set(['James','John','Robert','Michael','William','David','Richard','Joseph','Thomas','Charles','Christopher','Daniel','Matthew','Anthony','Mark','Donald','Steven','Paul','Andrew','Joshua','Kenneth','Kevin','Brian','George','Timothy','Ronald','Edward','Jason','Jeffrey','Ryan','Jacob','Gary','Nicholas','Eric','Jonathan','Stephen','Larry','Justin','Scott','Brandon','Benjamin','Samuel','Raymond','Frank','Alexander','Patrick','Jack','Tyler','Aaron','Jose','Adam','Henry','Nathan','Peter','Kyle','Ethan','Jeremy','Keith','Noah','Carl','Sean','Austin','Arthur','Jesse','Dylan','Bryan','Victor','Ivan','Harry','Todd','Mary','Patricia','Jennifer','Linda','Barbara','Elizabeth','Susan','Jessica','Sarah','Karen','Lisa','Nancy','Betty','Margaret','Sandra','Ashley','Dorothy','Kimberly','Emily','Donna','Michelle','Carol','Amanda','Melissa','Deborah','Stephanie','Rebecca','Sharon','Laura','Cynthia','Amy','Angela','Anna','Brenda','Emma','Nicole','Helen','Samantha','Katherine','Christine','Rachel','Carolyn','Janet','Catherine','Maria','Heather','Diane','Julie','Victoria','Ruth','Lauren','Kelly','Christina','Joan','Evelyn','Andrea','Hannah','Megan','Martha','Madison','Teresa','Sara','Sophia','Julia','Grace','Charlotte','Natalie','Diana','Olivia','Ava','Mia','Chloe','Ella','Zoe','Lily','Liam','Oliver','Elijah','Aiden','Lucas','Mason','Asher','Leo','Mohammed','Muhammad','Ali','Omar','Ahmed','Hassan','Ibrahim','Fatima','Aisha','Pierre','Jean','Marie','Francois','Sophie','Nicolas','Hans','Klaus','Stefan','Carlos','Miguel','Diego','Sofia','Valentina','Sebastian','Mateo','Boris','Dmitri','Natasha','Alexei','Sergei','Raj','Priya','Amit','Rahul','Pooja','Arjun','Ahmad','Siti','Nurul','Mohd','Nor','Zulkifli','Tan','Lee','Wong','Lim','Chan','Ng','Yap','Khoo','Cheah','Goh']);
+const _NER_COUNTRIES  = new Set(['Afghanistan','Albania','Algeria','Angola','Argentina','Armenia','Australia','Austria','Azerbaijan','Bangladesh','Belarus','Belgium','Bolivia','Brazil','Bulgaria','Cambodia','Cameroon','Canada','Chile','China','Colombia','Croatia','Cuba','Denmark','Ecuador','Egypt','Ethiopia','Finland','France','Georgia','Germany','Ghana','Greece','Guatemala','Hungary','India','Indonesia','Iran','Iraq','Ireland','Israel','Italy','Japan','Jordan','Kazakhstan','Kenya','Kuwait','Lebanon','Libya','Malaysia','Mexico','Morocco','Myanmar','Nepal','Netherlands','Nigeria','Norway','Pakistan','Peru','Philippines','Poland','Portugal','Romania','Russia','Saudi Arabia','Serbia','Singapore','Somalia','Spain','Sudan','Sweden','Switzerland','Syria','Taiwan','Tanzania','Thailand','Tunisia','Turkey','Uganda','Ukraine','Vietnam','Yemen','Zimbabwe','United States','United Kingdom','United Arab Emirates','South Africa','South Korea','North Korea','New Zealand','Hong Kong','Sri Lanka']);
+
+// Maps NER type → web-app entity type name (case-insensitive lookup)
+const _NER_TYPE_MAP = { PERSON:'PERSON', ORG:'ORGANIZATION', LOCATION:'LOCATION', DATE:'DATE', MONEY:'MISC' };
+
+function autoDetectNER(text) {
+  const res = [];
+  function add(re, type) {
+    re.lastIndex = 0;
+    let m;
+    while ((m = re.exec(text)) !== null)
+      res.push({ start: m.index, end: m.index + m[0].length, type });
+  }
+  add(_NER_DATE_RE,  'DATE');
+  add(_NER_MONEY_RE, 'MONEY');
+  add(_NER_ORG_RE,   'ORG');
+
+  // Acronyms → ORG
+  const aRe = /\b[A-Z]{2,5}\b/g;
+  let m;
+  while ((m = aRe.exec(text)) !== null)
+    if (!_NER_ACRONYM_SKIP.has(m[0])) res.push({ start: m.index, end: m.index + m[0].length, type: 'ORG' });
+
+  // Known first names → PERSON
+  const pRe = /\b([A-Z][a-z]{1,15})(?:\s+[A-Z][a-z]{1,15}){1,3}\b/g;
+  while ((m = pRe.exec(text)) !== null)
+    if (_NER_FIRST_NAMES.has(m[0].split(' ')[0]))
+      res.push({ start: m.index, end: m.index + m[0].length, type: 'PERSON' });
+
+  // Countries → LOCATION
+  _NER_COUNTRIES.forEach(c => {
+    const re = new RegExp(`\\b${c.replace(/\s/g,'\\s+')}\\b`, 'g');
+    while ((m = re.exec(text)) !== null)
+      res.push({ start: m.index, end: m.index + m[0].length, type: 'LOCATION' });
+  });
+
+  // Geographic suffixes → LOCATION
+  _NER_GEO_RE.lastIndex = 0;
+  while ((m = _NER_GEO_RE.exec(text)) !== null)
+    res.push({ start: m.index, end: m.index + m[0].length, type: 'LOCATION' });
+
+  // Sort and de-overlap
+  res.sort((a, b) => a.start - b.start || b.end - a.end);
+  const out = []; let last = -1;
+  for (const r of res) { if (r.start >= last) { out.push(r); last = r.end; } }
+  return out;
+}
+
+function handleAutoLabel() {
+  const text = DOM.rawTextInput.value;
+  if (!text.trim()) return;
+
+  pushUndo();
+  state.text = text;
+  state.mode = 'labeling';
+  state.annotations = [];
+
+  const detections = autoDetectNER(text);
+  let added = 0;
+
+  detections.forEach(det => {
+    const targetName = _NER_TYPE_MAP[det.type];
+    if (!targetName) return;
+    const et = state.entityTypes.find(e => e.name.toUpperCase() === targetName);
+    if (!et) return;
+    // Guard: skip if overlapping with an already-added annotation
+    const overlaps = state.annotations.some(a => !(det.end <= a.start || det.start >= a.end));
+    if (overlaps) return;
+    state.annotations.push({ id: uid(), start: det.start, end: det.end, entityTypeId: et.id, text: text.slice(det.start, det.end) });
+    added++;
+  });
+
+  render();
+  saveToStorage();
+
+  // Brief status update
+  DOM.docStatus.textContent = `Auto-detected ${added} entit${added !== 1 ? 'ies' : 'y'}`;
 }
 
 function handleStartLabeling() {
