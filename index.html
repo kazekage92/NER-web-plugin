@@ -19,22 +19,26 @@
     </header>
 
     <main class="app-main">
-      <!-- Left Panel: Entity Types -->
+      <!-- Left Panel: Entity & Relationship Types -->
       <aside class="panel panel-left">
-        <div class="panel-header">
-          <h2>Entity Types</h2>
-        </div>
-        <div class="entity-types-list" id="entity-types-list"></div>
-        <div class="add-entity-form">
-          <input
-            type="text"
-            id="new-entity-name"
-            class="input-field"
-            placeholder="Entity name (e.g. PERSON)"
-            maxlength="30"
-          />
-          <input type="color" id="new-entity-color" class="input-color" value="#4A90D9" title="Pick color" />
-          <button id="btn-add-entity" class="btn btn-add">Add</button>
+        <div class="panel-left-scroll">
+          <!-- Entity Types -->
+          <div class="panel-subheader"><span>Entity Types</span></div>
+          <div class="entity-types-list" id="entity-types-list"></div>
+          <div class="add-entity-form">
+            <input type="text" id="new-entity-name" class="input-field" placeholder="e.g. PERSON" maxlength="30" />
+            <input type="color" id="new-entity-color" class="input-color" value="#4A90D9" title="Pick color" />
+            <button id="btn-add-entity" class="btn btn-add">Add</button>
+          </div>
+
+          <!-- Relationship Types -->
+          <div class="panel-subheader"><span>Relationship Types</span></div>
+          <div class="rel-types-list" id="rel-types-list"></div>
+          <div class="add-entity-form">
+            <input type="text" id="new-rel-name" class="input-field" placeholder="e.g. OWNS" maxlength="30" />
+            <input type="color" id="new-rel-color" class="input-color" value="#f39c12" title="Pick color" />
+            <button id="btn-add-rel" class="btn btn-add">Add</button>
+          </div>
         </div>
 
         <div class="panel-section">
@@ -76,9 +80,9 @@
         <!-- Labeling mode -->
         <div id="labeling-mode" class="labeling-mode hidden">
           <div class="active-entity-bar">
-            <span class="active-entity-label">Active Entity:</span>
+            <span class="active-entity-label" id="active-entity-label">Active:</span>
             <span id="active-entity-badge" class="active-entity-badge">None selected</span>
-            <span class="tip">Select an entity type on the left, then highlight text to label it.</span>
+            <span class="tip">Select an entity or relationship type on the left, then highlight text to label it.</span>
           </div>
           <div
             id="text-display"
