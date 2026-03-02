@@ -101,7 +101,7 @@ function bindEvents() {
     DOM.charCount.textContent = `${DOM.rawTextInput.value.length} characters`;
   });
 
-  DOM.btnAutoLabel.addEventListener('click', handleAutoLabel);
+  DOM.btnAutoLabel?.addEventListener('click', handleAutoLabel);
   DOM.btnStartLabeling.addEventListener('click', handleStartLabeling);
   DOM.btnEditText.addEventListener('click', handleEditText);
 
@@ -219,7 +219,11 @@ function autoDetectNER(text) {
 
 function handleAutoLabel() {
   const text = DOM.rawTextInput.value;
-  if (!text.trim()) return;
+  console.log('[NER Auto-Detect] clicked, text length:', text.length);
+  if (!text.trim()) {
+    console.warn('[NER Auto-Detect] textarea is empty — paste text first');
+    return;
+  }
 
   pushUndo();
   state.text = text;
@@ -241,6 +245,7 @@ function handleAutoLabel() {
     added++;
   });
 
+  console.log(`[NER Auto-Detect] found ${detections.length} candidates, added ${added} annotations`);
   render();
   saveToStorage();
 
