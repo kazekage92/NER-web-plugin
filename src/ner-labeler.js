@@ -9,11 +9,11 @@
 // ─────────────────────────────────────────────────────────────────────────────
 
 const DEFAULT_ENTITY_TYPES = [
-  { name: 'PERSON',       color: '#e07b54' },
-  { name: 'ORGANIZATION', color: '#4a90d9' },
-  { name: 'LOCATION',     color: '#5ab86c' },
-  { name: 'DATE',         color: '#c97fd4' },
-  { name: 'MISC',         color: '#e0c454' },
+  { name: 'Company',  color: '#4a90d9' },
+  { name: 'People',   color: '#e07b54' },
+  { name: 'Time',     color: '#c97fd4' },
+  { name: 'Location', color: '#5ab86c' },
+  { name: 'Item',     color: '#e0c454' },
 ];
 
 let state = {
@@ -171,8 +171,8 @@ const _NER_ACRONYM_SKIP = new Set(['IS','IT','AN','IN','ON','AT','OR','TO','OF',
 const _NER_FIRST_NAMES = new Set(['James','John','Robert','Michael','William','David','Richard','Joseph','Thomas','Charles','Christopher','Daniel','Matthew','Anthony','Mark','Donald','Steven','Paul','Andrew','Joshua','Kenneth','Kevin','Brian','George','Timothy','Ronald','Edward','Jason','Jeffrey','Ryan','Jacob','Gary','Nicholas','Eric','Jonathan','Stephen','Larry','Justin','Scott','Brandon','Benjamin','Samuel','Raymond','Frank','Alexander','Patrick','Jack','Tyler','Aaron','Jose','Adam','Henry','Nathan','Peter','Kyle','Ethan','Jeremy','Keith','Noah','Carl','Sean','Austin','Arthur','Jesse','Dylan','Bryan','Victor','Ivan','Harry','Todd','Mary','Patricia','Jennifer','Linda','Barbara','Elizabeth','Susan','Jessica','Sarah','Karen','Lisa','Nancy','Betty','Margaret','Sandra','Ashley','Dorothy','Kimberly','Emily','Donna','Michelle','Carol','Amanda','Melissa','Deborah','Stephanie','Rebecca','Sharon','Laura','Cynthia','Amy','Angela','Anna','Brenda','Emma','Nicole','Helen','Samantha','Katherine','Christine','Rachel','Carolyn','Janet','Catherine','Maria','Heather','Diane','Julie','Victoria','Ruth','Lauren','Kelly','Christina','Joan','Evelyn','Andrea','Hannah','Megan','Martha','Madison','Teresa','Sara','Sophia','Julia','Grace','Charlotte','Natalie','Diana','Olivia','Ava','Mia','Chloe','Ella','Zoe','Lily','Liam','Oliver','Elijah','Aiden','Lucas','Mason','Asher','Leo','Mohammed','Muhammad','Ali','Omar','Ahmed','Hassan','Ibrahim','Fatima','Aisha','Pierre','Jean','Marie','Francois','Sophie','Nicolas','Hans','Klaus','Stefan','Carlos','Miguel','Diego','Sofia','Valentina','Sebastian','Mateo','Boris','Dmitri','Natasha','Alexei','Sergei','Raj','Priya','Amit','Rahul','Pooja','Arjun','Ahmad','Siti','Nurul','Mohd','Nor','Zulkifli','Tan','Lee','Wong','Lim','Chan','Ng','Yap','Khoo','Cheah','Goh']);
 const _NER_COUNTRIES  = new Set(['Afghanistan','Albania','Algeria','Angola','Argentina','Armenia','Australia','Austria','Azerbaijan','Bangladesh','Belarus','Belgium','Bolivia','Brazil','Bulgaria','Cambodia','Cameroon','Canada','Chile','China','Colombia','Croatia','Cuba','Denmark','Ecuador','Egypt','Ethiopia','Finland','France','Georgia','Germany','Ghana','Greece','Guatemala','Hungary','India','Indonesia','Iran','Iraq','Ireland','Israel','Italy','Japan','Jordan','Kazakhstan','Kenya','Kuwait','Lebanon','Libya','Malaysia','Mexico','Morocco','Myanmar','Nepal','Netherlands','Nigeria','Norway','Pakistan','Peru','Philippines','Poland','Portugal','Romania','Russia','Saudi Arabia','Serbia','Singapore','Somalia','Spain','Sudan','Sweden','Switzerland','Syria','Taiwan','Tanzania','Thailand','Tunisia','Turkey','Uganda','Ukraine','Vietnam','Yemen','Zimbabwe','United States','United Kingdom','United Arab Emirates','South Africa','South Korea','North Korea','New Zealand','Hong Kong','Sri Lanka']);
 
-// Maps NER type → web-app entity type name (case-insensitive lookup)
-const _NER_TYPE_MAP = { PERSON:'PERSON', ORG:'ORGANIZATION', LOCATION:'LOCATION', DATE:'DATE', MONEY:'MISC' };
+// Maps NER detector type → web-app entity type name (matched via .toUpperCase())
+const _NER_TYPE_MAP = { PERSON:'PEOPLE', ORG:'COMPANY', LOCATION:'LOCATION', DATE:'TIME', MONEY:'ITEM' };
 
 function autoDetectNER(text) {
   const res = [];
@@ -699,6 +699,7 @@ function undo() {
 function saveToStorage() {
   try {
     localStorage.setItem('ner-plugin-state', JSON.stringify({
+      schemaVersion: ENTITY_SCHEMA_VERSION,
       text: state.text,
       entityTypes: state.entityTypes,
       annotations: state.annotations,
@@ -709,13 +710,20 @@ function saveToStorage() {
   } catch { /* storage quota exceeded, ignore */ }
 }
 
+// Increment whenever DEFAULT_ENTITY_TYPES changes; forces entity type reset.
+const ENTITY_SCHEMA_VERSION = 2;
+
 function loadFromStorage() {
   try {
     const raw = localStorage.getItem('ner-plugin-state');
     if (!raw) return;
     const saved = JSON.parse(raw);
+    // Only restore saved entity types when the schema version matches,
+    // otherwise keep the new defaults so renamed types take effect.
+    if ((saved.schemaVersion || 1) >= ENTITY_SCHEMA_VERSION) {
+      state.entityTypes = saved.entityTypes || state.entityTypes;
+    }
     state.text              = saved.text              || '';
-    state.entityTypes       = saved.entityTypes       || state.entityTypes;
     state.annotations       = saved.annotations       || [];
     state.activeEntityTypeId= saved.activeEntityTypeId|| null;
     state.mode              = saved.mode              || 'input';
