@@ -183,10 +183,30 @@ body {
 
 .btn-sm { padding: 4px 10px; font-size: .78rem; }
 
-/* ===== Entity Types ===== */
-.entity-types-list {
+/* ===== Scrollable left panel content ===== */
+.panel-left-scroll {
   flex: 1;
   overflow-y: auto;
+}
+
+.panel-subheader {
+  padding: 8px 14px 6px;
+  background: var(--bg-secondary);
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+}
+
+.panel-subheader span {
+  font-size: .78rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: .06em;
+  color: var(--text-secondary);
+}
+
+/* ===== Entity Types ===== */
+.entity-types-list,
+.rel-types-list {
   padding: 8px;
 }
 
@@ -218,6 +238,16 @@ body {
   border-radius: 50%;
   flex-shrink: 0;
   border: 2px solid rgba(255,255,255,.25);
+}
+
+.rel-swatch {
+  width: 14px;
+  height: 14px;
+  flex-shrink: 0;
+  font-size: .8rem;
+  line-height: 14px;
+  text-align: center;
+  font-weight: 700;
 }
 
 .entity-name {
@@ -465,6 +495,26 @@ kbd {
   font-family: var(--font-ui);
   pointer-events: none;
   user-select: none;
+}
+
+/* ===== Relationship spans ===== */
+.ner-rel-span {
+  border-radius: 3px;
+  padding: 1px 2px;
+  cursor: pointer;
+  position: relative;
+  transition: filter var(--transition);
+  white-space: pre;
+  font-style: italic;
+}
+
+.ner-rel-span:hover {
+  filter: brightness(1.15);
+}
+
+.ner-rel-span.selected {
+  outline: 2px solid #fff;
+  outline-offset: 1px;
 }
 
 /* ===== Annotations Panel ===== */
