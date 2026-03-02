@@ -241,6 +241,68 @@ const _NER_FIRST_NAMES = new Set(['James','John','Robert','Michael','William','D
 
 const _NER_COUNTRIES = new Set(['Afghanistan','Albania','Algeria','Angola','Argentina','Armenia','Australia','Austria','Azerbaijan','Bangladesh','Belarus','Belgium','Bolivia','Brazil','Bulgaria','Cambodia','Cameroon','Canada','Chile','China','Colombia','Croatia','Cuba','Denmark','Ecuador','Egypt','Ethiopia','Finland','France','Georgia','Germany','Ghana','Greece','Guatemala','Hungary','India','Indonesia','Iran','Iraq','Ireland','Israel','Italy','Japan','Jordan','Kazakhstan','Kenya','Kuwait','Lebanon','Libya','Malaysia','Mexico','Morocco','Myanmar','Nepal','Netherlands','Nigeria','Norway','Pakistan','Peru','Philippines','Poland','Portugal','Romania','Russia','Saudi Arabia','Serbia','Singapore','Somalia','Spain','Sudan','Sweden','Switzerland','Syria','Taiwan','Tanzania','Thailand','Tunisia','Turkey','Uganda','Ukraine','Vietnam','Yemen','Zimbabwe','United States','United Kingdom','United Arab Emirates','South Africa','South Korea','North Korea','New Zealand','Hong Kong','Sri Lanka']);
 
+// ─── Malaysian company name pattern ─────────────────────────────────────────
+// Captures: core name (group 1) + optional qualifier in parens (group 2) + legal suffix
+// Examples:
+//   "Axiata Group (M) Sdn Bhd"  →  core "Axiata Group"
+//   "Gamuda Berhad"             →  core "Gamuda"
+//   "IHH Healthcare Berhad"     →  core "IHH Healthcare"
+//   "ABC Corp Pte Ltd"          →  core "ABC Corp"
+const _MY_COMPANY_RE = /\b([A-Z][A-Za-z0-9&''\-\.]+(?:\s+[A-Z&][A-Za-z0-9&''\-\.]*){0,5})(\s*\([A-Za-z0-9\s\.\-]{1,25}\))?\s+(Sdn\.?\s*Bhd\.?|Sendirian\s+Berhad|Berhad|Bhd\.?|Pte\.?\s*Ltd\.?)\b/g;
+
+/**
+ * Detect full Malaysian company names (core name + optional qualifier + legal suffix)
+ * as single entities, then track short-form aliases used in subsequent mentions.
+ *
+ * Short-form alias rules:
+ *  - The coreName (e.g. "Axiata Group") is always an alias.
+ *  - The first word is used as an alias ONLY when it is an all-caps acronym
+ *    (e.g. "CIMB", "IHH", "RHB") — single mixed-case words are too generic.
+ *
+ * @param {string} text
+ * @returns {Array<{start,end,type:'ORG'}>}
+ */
+function detectMalaysianCompanies(text) {
+  const results = [];
+  const seen = [];  // [{fullStart, fullEnd, shortForms}]
+  let m;
+
+  _MY_COMPANY_RE.lastIndex = 0;
+  while ((m = _MY_COMPANY_RE.exec(text)) !== null) {
+    const fullStart = m.index;
+    const fullEnd   = m.index + m[0].length;
+    const coreName  = m[1].trim();
+
+    results.push({ start: fullStart, end: fullEnd, type: 'ORG' });
+
+    // Build candidate short forms
+    const shortForms = [coreName];
+    const words = coreName.split(/\s+/);
+    // Only add first-word alias if it is an all-caps acronym (avoids generic word false positives)
+    if (words.length > 1 && /^[A-Z]{2,6}$/.test(words[0])) {
+      shortForms.push(words[0]);
+    }
+    seen.push({ fullStart, fullEnd, shortForms });
+  }
+
+  // Alias pass: tag every subsequent (and prior) occurrence of each short form
+  for (const co of seen) {
+    for (const sf of co.shortForms) {
+      const escaped = sf.replace(/[.*+?^${}()|[\]\\]/g, '\\$&').replace(/\s+/g, '\\s+');
+      const sfRe = new RegExp(`\\b${escaped}\\b`, 'g');
+      sfRe.lastIndex = 0;
+      while ((m = sfRe.exec(text)) !== null) {
+        const s = m.index, e = m.index + m[0].length;
+        // Skip positions that fall inside the full-name span (already covered)
+        if (s >= co.fullStart && e <= co.fullEnd) continue;
+        results.push({ start: s, end: e, type: 'ORG' });
+      }
+    }
+  }
+
+  return results;
+}
+
 // ─── Malaysian-specific locations ──────────────────────────────────────────
 const _MY_LOCATIONS = new Set([
   // Federal territories
@@ -297,8 +359,12 @@ function autoDetectNER(text) {
 
   add(_NER_DATE_RE, 'DATE');
   add(_NER_MONEY_RE, 'MONEY');
-  add(_NER_ORG_RE, 'ORG');
   add(_NER_PHYSICAL_ITEM_RE, 'PHYSICAL_ITEM');
+
+  // Malaysian company names: full form ("XYZ Holdings (M) Sdn Bhd") + short-form aliases
+  // Run BEFORE generic _NER_ORG_RE so de-overlap keeps the longer, more precise match
+  detectMalaysianCompanies(text).forEach(r => res.push(r));
+  add(_NER_ORG_RE, 'ORG');
 
   // Acronyms → ORG (with expanded skip list)
   const aRe = /\b[A-Z]{2,5}\b/g;
@@ -1492,7 +1558,7 @@ function undo() {
 // ─────────────────────────────────────────────────────────────────────────────
 
 // Increment whenever defaults change; forces type reset.
-const ENTITY_SCHEMA_VERSION = 3;
+const ENTITY_SCHEMA_VERSION = 4;
 
 function saveToStorage() {
   try {
