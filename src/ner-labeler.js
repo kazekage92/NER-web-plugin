@@ -76,6 +76,10 @@ const DOM = {
 // ─────────────────────────────────────────────────────────────────────────────
 
 function init() {
+  console.log('[NER] init() started, btn-auto-label in DOM:',
+    !!document.getElementById('btn-auto-label'),
+    'DOM.btnAutoLabel:', DOM.btnAutoLabel);
+
   DEFAULT_ENTITY_TYPES.forEach(et => {
     state.entityTypes.push({ id: uid(), name: et.name, color: et.color });
   });
@@ -83,6 +87,9 @@ function init() {
   loadFromStorage();
   bindEvents();
   render();
+
+  console.log('[NER] init() complete, auto-label listener attached:',
+    !!(DOM.btnAutoLabel || document.getElementById('btn-auto-label')));
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -101,7 +108,9 @@ function bindEvents() {
     DOM.charCount.textContent = `${DOM.rawTextInput.value.length} characters`;
   });
 
-  DOM.btnAutoLabel?.addEventListener('click', handleAutoLabel);
+  // Re-query the auto-label button at bind time (safe if DOM was captured before element existed)
+  (DOM.btnAutoLabel || document.getElementById('btn-auto-label'))
+    ?.addEventListener('click', handleAutoLabel);
   DOM.btnStartLabeling.addEventListener('click', handleStartLabeling);
   DOM.btnEditText.addEventListener('click', handleEditText);
 
