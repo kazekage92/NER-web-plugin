@@ -342,115 +342,325 @@ function autoDetectNER(text) {
 // NER Engine — Relationship Detection
 // ─────────────────────────────────────────────────────────────────────────────
 
+// _REL_PATTERNS: each entry covers all synonyms, tenses, and common variants.
+// Patterns are case-insensitive and use word boundaries to avoid false matches.
 const _REL_PATTERNS = [
   {
     name: 'Operates',
     patterns: [
-      /\boperate[sd]?\b/gi, /\boperating\b/gi,
-      /\bmanage[sd]?\b/gi, /\bmanaging\b/gi,
+      // operate / operates / operated / operating / operation(s)
+      /\boperat(?:e[sd]?|es|ing|ion[s]?)\b/gi,
+      // manage / manages / managed / managing / management
+      /\bmanag(?:e[sd]?|es|ing|ement)\b/gi,
+      // run / runs / ran / running
+      /\brun[s]?\b/gi, /\bran\b/gi, /\brunning\b/gi,
+      // conduct / conducts / conducted / conducting
+      /\bconduct(?:s|ed|ing)?\b/gi,
+      // oversee / oversees / oversaw / overseeing / oversight
+      /\boversee[s]?\b/gi, /\boversaw\b/gi, /\boverseeing\b/gi,
+      // administer / administers / administered / administering
+      /\badminister(?:s|ed|ing)?\b/gi,
+      // handle / handles / handled / handling
+      /\bhandl(?:e[sd]?|es|ing)\b/gi,
+      // control / controls / controlled / controlling
+      /\bcontrol(?:s|led|ling)?\b/gi,
+      // maintain / maintains / maintained / maintaining
+      /\bmaintain(?:s|ed|ing)?\b/gi,
     ]
   },
   {
     name: 'Owes / In Debt',
     patterns: [
-      /\bowed\b/gi, /\bowes\b/gi, /\bowing\b/gi,
-      /\bin\s+debt\b/gi, /\bliabilit\w+\b/gi,
-      /\bborrow(?:ed|s|ing)\b/gi,
-      /\bdefault(?:ed|s|ing)?\s+on\b/gi,
+      // owe / owes / owed / owing
+      /\bow(?:e[sd]?|es|ing)\b/gi,
+      // borrow / borrows / borrowed / borrowing
+      /\bborrow(?:s|ed|ing)?\b/gi,
+      // in debt / indebted / debt(s)
+      /\bin\s+debt\b/gi, /\bindebted\b/gi, /\bdebt[s]?\b/gi,
+      // liability / liabilities
+      /\bliabilit(?:y|ies)\b/gi,
+      // default / defaults / defaulted / defaulting (on)
+      /\bdefault(?:s|ed|ing)?(?:\s+on)?\b/gi,
+      // payable / receivable
       /\bpayable\b/gi, /\breceivable\b/gi,
+      // obligation / obligations
+      /\bobligation[s]?\b/gi,
+      // outstanding / arrears
+      /\boutstanding\b/gi, /\barrears\b/gi,
     ]
   },
   {
     name: 'Sells / Divests',
     patterns: [
+      // sell / sells / sold / selling
       /\bsell(?:s|ing)?\b/gi, /\bsold\b/gi,
-      /\bdispose[sd]?\b/gi, /\bdisposing\b/gi, /\bdisposal\b/gi,
-      /\bdivest(?:s|ed|ing|iture)?\b/gi,
+      // dispose / disposes / disposed / disposing / disposal
+      /\bdispos(?:e[sd]?|es|ing|al[s]?)\b/gi,
+      // divest / divests / divested / divesting / divestiture / divestment
+      /\bdivest(?:s|ed|ing|iture[s]?|ment[s]?)?\b/gi,
+      // offload / offloads / offloaded / offloading
+      /\boffload(?:s|ed|ing)?\b/gi,
+      // transfer / transfers / transferred / transferring
+      /\btransfer(?:s|red|ring)?\b/gi,
+      // relinquish / relinquishes / relinquished / relinquishing
+      /\brelinquish(?:es|ed|ing)?\b/gi,
+      // exit / exits / exited / exiting (business)
+      /\bexit(?:s|ed|ing)?\b/gi,
+      // let go of / parting with
+      /\bparting\s+with\b/gi,
+      // spin off / spun off / spinning off
+      /\bspin(?:s|ning)?\s+off\b/gi, /\bspun\s+off\b/gi,
+      // carve out / carved out
+      /\bcarve[sd]?\s+out\b/gi, /\bcarving\s+out\b/gi,
     ]
   },
   {
     name: 'Acquires',
     patterns: [
-      /\bacquire[sd]?\b/gi, /\bacquiring\b/gi, /\bacquisition\b/gi,
-      /\btakeover\b/gi, /\btook\s+over\b/gi,
-      /\bmerge[sd]?\b/gi, /\bmerging\b/gi, /\bmerger\b/gi,
-      /\bpurchase[sd]?\b/gi, /\bbuy(?:s|ing)?\b/gi, /\bbought\b/gi,
+      // acquire / acquires / acquired / acquiring / acquisition(s)
+      /\bacquir(?:e[sd]?|es|ing)\b/gi, /\bacquisition[s]?\b/gi,
+      // buy / buys / bought / buying
+      /\bbuy(?:s|ing)?\b/gi, /\bbought\b/gi,
+      // purchase / purchases / purchased / purchasing
+      /\bpurchas(?:e[sd]?|es|ing)\b/gi,
+      // take over / takes over / took over / taking over
+      /\btak(?:e[s]?|ing)\s+over\b/gi, /\btook\s+over\b/gi,
+      // merge / merges / merged / merging / merger(s)
+      /\bmerg(?:e[sd]?|es|ing|er[s]?)\b/gi,
+      // takeover(s)
+      /\btakeover[s]?\b/gi,
+      // absorb / absorbs / absorbed / absorbing
+      /\babsorb(?:s|ed|ing)?\b/gi,
+      // consolidate / consolidates / consolidated / consolidation
+      /\bconsolidat(?:e[sd]?|es|ing|ion)?\b/gi,
+      // bid for / bids for / bidding for
+      /\bbid(?:s|ding)?\s+for\b/gi,
+      // snap up / snapped up
+      /\bsnap(?:s|ped|ping)?\s+up\b/gi,
+      // invest in / invested in / investing in
+      /\binvest(?:s|ed|ing)?\s+in\b/gi,
     ]
   },
   {
     name: 'Partners With',
     patterns: [
-      /\bjoint\s+venture\b/gi,
-      /\bpartner(?:s|ed|ing|ship)?\b/gi,
-      /\bcollaborat\w+\b/gi, /\balliance\b/gi,
-      /\bconsortium\b/gi,
+      // partner / partners / partnered / partnering / partnership(s)
+      /\bpartner(?:s|ed|ing|ship[s]?)?\b/gi,
+      // collaborate / collaborates / collaborated / collaborating / collaboration
+      /\bcollaborat(?:e[sd]?|es|ing|ion)?\b/gi,
+      // joint venture(s) / JV
+      /\bjoint\s+venture[s]?\b/gi,
+      // consortium / consortiums / consortia
+      /\bconsortia?\b/gi,
+      // alliance(s)
+      /\balliance[s]?\b/gi,
+      // team up / teamed up / teams up / teaming up
+      /\bteam(?:s|ed|ing)?\s+up\b/gi,
+      // join forces / joining forces
+      /\bjoin(?:s|ed|ing)?\s+forces\b/gi,
+      // cooperate / cooperates / cooperated / cooperating / cooperation
+      /\bcooperat(?:e[sd]?|es|ing|ion)?\b/gi,
+      // tie-up / tie up
+      /\btie[\-\s]up[s]?\b/gi,
+      // work with / working with / worked with
+      /\bwork(?:s|ed|ing)?\s+with\b/gi,
+      // align / aligns / aligned / aligning
+      /\balign(?:s|ed|ing)?\b/gi,
     ]
   },
   {
     name: 'Subsidiary Of',
     patterns: [
-      /\bsubsidiar\w+\b/gi, /\baffiliat\w+\b/gi,
+      // subsidiary / subsidiaries
+      /\bsubsidiar(?:y|ies)\b/gi,
+      // affiliate / affiliates / affiliated / affiliating
+      /\baffiliat(?:e[sd]?|es|ing|ion)?\b/gi,
+      // wholly-owned / wholly owned
       /\bwholly[\-\s]owned\b/gi,
-      /\bparent\s+compan\w+\b/gi,
+      // parent company / parent companies / parent of
+      /\bparent\s+compan(?:y|ies)\b/gi, /\bparent\s+of\b/gi,
+      // unit of / arm of / branch of / division of
+      /\bunit\s+of\b/gi, /\barm\s+of\b/gi,
+      /\bbranch\s+of\b/gi, /\bdivision\s+of\b/gi,
+      // owned under / controlled under
+      /\bowned\s+(?:by|under)\b/gi, /\bcontrolled\s+under\b/gi,
+      // a unit / a subsidiary
+      /\ba\s+(?:listed\s+)?(?:subsidiary|unit)\s+of\b/gi,
     ]
   },
   {
     name: 'Contracts / Awarded',
     patterns: [
-      /\bawarded?\b/gi, /\bawarding\b/gi,
+      // award / awards / awarded / awarding
+      /\baward(?:s|ed|ing)?\b/gi,
+      // contract / contracts / contracted / contracting
       /\bcontract(?:s|ed|ing)?\b/gi,
-      /\btendered?\b/gi, /\btendering\b/gi,
-      /\bprocure[sd]?\b/gi, /\bprocurement\b/gi,
-      /\bcommission(?:ed|ing)?\b/gi,
+      // tender / tenders / tendered / tendering
+      /\btender(?:s|ed|ing)?\b/gi,
+      // bid / bids / bidding (on contract)
+      /\bbid(?:s|ding)?\b/gi,
+      // procure / procures / procured / procuring / procurement
+      /\bprocur(?:e[sd]?|es|ing|ement)?\b/gi,
+      // commission / commissions / commissioned / commissioning
+      /\bcommission(?:s|ed|ing)?\b/gi,
+      // supply / supplies / supplied / supplying
+      /\bsuppl(?:y(?:ing)?|ies|ied)\b/gi,
+      // deliver / delivers / delivered / delivering / delivery
+      /\bdeliver(?:s|ed|ing|y)?\b/gi,
+      // engage / engages / engaged / engaging
+      /\bengag(?:e[sd]?|es|ing)\b/gi,
+      // sign a deal / signed a deal / signing a deal
+      /\bsign(?:s|ed|ing)?\s+(?:a\s+)?(?:deal|agreement|contract|MOU|letter\s+of\s+intent)\b/gi,
+      // ink a deal / inked a deal
+      /\bink(?:s|ed|ing)?\s+(?:a\s+)?(?:deal|agreement|contract)\b/gi,
     ]
   },
   {
     name: 'Listed On',
     patterns: [
-      /\blisted\s+on\b/gi, /\blisting\b/gi,
-      /\btraded\s+on\b/gi, /\bdelisted?\b/gi,
-      /\bfloat(?:ed|ing)?\b/gi, /\bBursa\b/gi,
+      // listed on / listing on
+      /\blist(?:s|ed|ing)?\s+on\b/gi,
+      // IPO
+      /\bIPO\b/g,
+      // float / floats / floated / floating
+      /\bfloat(?:s|ed|ing)?\b/gi,
+      // trade / trades / traded / trading on
+      /\btrad(?:e[sd]?|es|ing)\s+on\b/gi,
+      // delist / delists / delisted / delisting
+      /\bdelist(?:s|ed|ing)?\b/gi,
+      // Bursa / Bursa Malaysia / stock exchange
+      /\bBursa\b/gi, /\bstock\s+exchange\b/gi,
+      // go public / went public / goes public / going public
+      /\bgo(?:es|ing)?\s+public\b/gi, /\bwent\s+public\b/gi,
+      // make its debut / debuted
+      /\bdebut(?:s|ed|ing)?\b/gi,
     ]
   },
   {
     name: 'Owned By',
     patterns: [
-      /\bowned?\s+by\b/gi, /\bbelong(?:s|ed)?\s+to\b/gi,
-      /\bcontrolled?\s+by\b/gi, /\bheld\s+by\b/gi,
-      /\bshareholder[s]?\b/gi, /\bstakeholder[s]?\b/gi,
-      /\bmajority\s+(?:stake|shareholder|owner)\b/gi,
+      // own / owns / owned / owning
+      /\bown(?:s|ed|ing)?\b/gi,
+      // hold / holds / held / holding (a stake)
+      /\bhold(?:s|ing)?\b/gi, /\bheld\b/gi,
+      // belong / belongs / belonged to
+      /\bbelong(?:s|ed|ing)?\s+to\b/gi,
+      // shareholder(s) / stockholder(s)
+      /\bshareholder[s]?\b/gi, /\bstockholder[s]?\b/gi,
+      // stakeholder(s)
+      /\bstakeholder[s]?\b/gi,
+      // majority stake / majority owner / majority shareholder
+      /\bmajority\s+(?:stake|owner|shareholder|interest)\b/gi,
+      // equity stake / equity interest / equity holding
+      /\bequity\s+(?:stake|interest|holding)\b/gi,
+      // minority stake / minority interest
+      /\bminority\s+(?:stake|interest)\b/gi,
     ]
   },
   {
     name: 'Appointed',
     patterns: [
-      /\bappoint(?:s|ed|ing|ment)?\b/gi,
-      /\bnominat(?:e[sd]?|ing|ion)?\b/gi,
-      /\bresign(?:s|ed|ing|ation)?\b/gi,
-      /\bstepped?\s+down\b/gi, /\bretire[sd]?\b/gi,
+      // appoint / appoints / appointed / appointing / appointment(s)
+      /\bappoint(?:s|ed|ing|ment[s]?)?\b/gi,
+      // nominate / nominates / nominated / nominating / nomination
+      /\bnominat(?:e[sd]?|es|ing|ion[s]?)?\b/gi,
+      // name / named / naming as (CEO)
+      /\bnam(?:e[sd]?|es|ing)\b/gi,
+      // resign / resigns / resigned / resigning / resignation
+      /\bresign(?:s|ed|ing|ation[s]?)?\b/gi,
+      // step down / steps down / stepped down / stepping down
+      /\bstep(?:s|ped|ping)?\s+down\b/gi,
+      // retire / retires / retired / retiring / retirement
+      /\bretir(?:e[sd]?|es|ing|ement)?\b/gi,
+      // hire / hires / hired / hiring
+      /\bhir(?:e[sd]?|es|ing)\b/gi,
+      // promote / promotes / promoted / promoting / promotion
+      /\bpromot(?:e[sd]?|es|ing|ion[s]?)?\b/gi,
+      // succeed / succeeds / succeeded / succeeding / successor
+      /\bsuccee(?:d[sd]?|ds|ding)\b/gi, /\bsuccessor[s]?\b/gi,
+      // take over from / took over from
+      /\btook?\s+over\s+(?:as|from)\b/gi,
     ]
   },
   {
     name: 'Raises Capital',
     patterns: [
-      /\brights?\s+issue\b/gi, /\bplacement\b/gi,
-      /\braise[sd]?\s+(?:fund[s]?|capital)\b/gi,
-      /\bbond\s+issuance\b/gi, /\bsukuk\b/gi,
+      // rights issue(s)
+      /\brights?\s+issue[s]?\b/gi,
+      // placement / private placement
+      /\bprivate\s+placement[s]?\b/gi, /\bplacement[s]?\b/gi,
+      // raise / raises / raised / raising (funds / capital / money / financing)
+      /\brais(?:e[sd]?|es|ing)\s+(?:fund[s]?|capital|money|financing)\b/gi,
+      // bond issuance / bond offering
+      /\bbond[s]?\s+(?:issuance|offering)\b/gi,
+      // sukuk
+      /\bsukuk\b/gi,
+      // warrant(s)
       /\bwarrant[s]?\b/gi,
-      /\bprivate\s+placement\b/gi,
+      // fund-raise / fund-raising
+      /\bfund[\-\s]rais(?:e[sd]?|ing)\b/gi,
+      // debt issuance / equity issuance
+      /\b(?:debt|equity)\s+issuance\b/gi,
+      // ICULS / RCULS / ESOS (capital instruments)
+      /\bICULS\b/g, /\bRCULS\b/g, /\bESOS\b/g,
     ]
   },
   {
     name: 'Located In',
     patterns: [
-      /\bbase[sd]\s+in\b/gi, /\bheadquartered?\s+in\b/gi,
-      /\bsituated?\s+in\b/gi, /\blocated?\s+in\b/gi,
+      // based in / base operations in
+      /\bbas(?:e[sd]?|es|ing)\s+in\b/gi,
+      // headquartered in / headquartered at / headquarters in
+      /\bheadquarter(?:s|ed)?\s+in\b/gi,
+      // situated in / situate in
+      /\bsituat(?:e[sd]?|es|ing)?\s+in\b/gi,
+      // located in / locate in
+      /\blocat(?:e[sd]?|es|ing)?\s+in\b/gi,
+      // operates in / operating in / operated in / operate at / from
+      /\boperat(?:e[sd]?|es|ing)\s+(?:in|at|from|across)\b/gi,
+      // established in
+      /\bestablish(?:es|ed|ing)?\s+in\b/gi,
+      // set up in / sets up in
+      /\bset(?:s|ting)?\s+up\s+in\b/gi,
+      // present in / presence in
+      /\bpres(?:ent|ence)\s+in\b/gi,
+      // expand / expands / expanded / expanding into
+      /\bexpand(?:s|ed|ing)?\s+(?:in|into)\b/gi,
     ]
   },
 ];
 
-function autoDetectRelationships(text) {
+/**
+ * Find the nearest entity annotation before (subject) and after (object) a
+ * relationship keyword at [relStart, relEnd].  Returns annotation IDs or null.
+ */
+function findLinkedEntities(relStart, relEnd, entityAnnotations, maxDist) {
+  let subject = null, subjectDist = maxDist + 1;
+  let object  = null, objectDist  = maxDist + 1;
+
+  for (const ann of entityAnnotations) {
+    if (ann.end <= relStart) {
+      const d = relStart - ann.end;
+      if (d < subjectDist) { subjectDist = d; subject = ann; }
+    } else if (ann.start >= relEnd) {
+      const d = ann.start - relEnd;
+      if (d < objectDist)  { objectDist  = d; object  = ann; }
+    }
+  }
+  return { subjectId: subject ? subject.id : null, objectId: object ? object.id : null };
+}
+
+/**
+ * Detect relationship keywords in text, then link each to the nearest entity
+ * before (subject) and after (object) within MAX_LINK_DIST characters.
+ * @param {string} text
+ * @param {Array}  entityAnnotations  – already-built entity annotation array
+ * @returns {Array} detections with { start, end, name, subjectId, objectId }
+ */
+function autoDetectRelationships(text, entityAnnotations) {
+  const MAX_LINK_DIST = 300;
   const res = [];
+
   _REL_PATTERNS.forEach(({ name, patterns }) => {
     patterns.forEach(pat => {
       pat.lastIndex = 0;
@@ -460,11 +670,17 @@ function autoDetectRelationships(text) {
       }
     });
   });
-  // De-overlap
+
+  // De-overlap (longest match wins at each position)
   res.sort((a, b) => a.start - b.start || (b.end - b.start) - (a.end - a.start));
-  const out = []; let last = -1;
-  for (const r of res) { if (r.start >= last) { out.push(r); last = r.end; } }
-  return out;
+  const deduped = []; let last = -1;
+  for (const r of res) { if (r.start >= last) { deduped.push(r); last = r.end; } }
+
+  // Link each keyword to nearest subject/object entity
+  return deduped.map(r => ({
+    ...r,
+    ...findLinkedEntities(r.start, r.end, entityAnnotations, MAX_LINK_DIST),
+  }));
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -496,8 +712,8 @@ function handleAutoLabel() {
     entAdded++;
   });
 
-  // Relationship detection
-  const relDetections = autoDetectRelationships(text);
+  // Relationship detection — pass entity annotations so subject/object can be linked
+  const relDetections = autoDetectRelationships(text, state.annotations);
   let relAdded = 0;
 
   relDetections.forEach(det => {
@@ -507,7 +723,12 @@ function handleAutoLabel() {
     const overlapsEnt = state.annotations.some(a => !(det.end <= a.start || det.start >= a.end));
     const overlapsRel = state.relAnnotations.some(a => !(det.end <= a.start || det.start >= a.end));
     if (overlapsEnt || overlapsRel) return;
-    state.relAnnotations.push({ id: uid(), start: det.start, end: det.end, relTypeId: rt.id, text: text.slice(det.start, det.end) });
+    state.relAnnotations.push({
+      id: uid(), start: det.start, end: det.end,
+      relTypeId: rt.id, text: text.slice(det.start, det.end),
+      subjectId: det.subjectId || null,
+      objectId:  det.objectId  || null,
+    });
     relAdded++;
   });
 
@@ -946,18 +1167,53 @@ function renderTextDisplay() {
       const rt  = ann && state.relationshipTypes.find(t => t.id === ann.relTypeId);
       if (!rt) return;
       showTooltip(e, `REL: ${rt.name}  [${ann.start}\u2013${ann.end}]`);
+      if (ann) highlightLinkedEntities(ann.subjectId, ann.objectId, rt.color);
     });
-    span.addEventListener('mouseleave', hideTooltip);
+    span.addEventListener('mouseleave', () => {
+      hideTooltip();
+      // Only clear highlights if this rel is not selected
+      const ann = state.relAnnotations.find(a => a.id === relId);
+      if (!ann || state.selectedRelAnnId !== relId) clearLinkedHighlights();
+    });
   });
+
+  // If a relationship is currently selected, keep its entities highlighted
+  if (state.selectedRelAnnId) {
+    const selRel = state.relAnnotations.find(a => a.id === state.selectedRelAnnId);
+    const selRt  = selRel && state.relationshipTypes.find(t => t.id === selRel.relTypeId);
+    if (selRel && selRt) highlightLinkedEntities(selRel.subjectId, selRel.objectId, selRt.color);
+  }
 
   // Clicking background deselects
   DOM.textDisplay.addEventListener('click', e => {
     if (e.target === DOM.textDisplay) {
       state.selectedAnnotationId = null;
       state.selectedRelAnnId = null;
+      clearLinkedHighlights();
       renderTextDisplay();
     }
   }, { once: true });
+}
+
+/** Highlight the subject and object entity spans of a relationship. */
+function highlightLinkedEntities(subjectId, objectId, color) {
+  clearLinkedHighlights();
+  const applyClass = (annId, cls) => {
+    if (!annId) return;
+    const el = DOM.textDisplay.querySelector(`[data-ann-id="${annId}"]`);
+    if (!el) return;
+    el.classList.add(cls);
+    el.style.setProperty('--link-color', color);
+  };
+  applyClass(subjectId, 'linked-subject');
+  applyClass(objectId,  'linked-object');
+}
+
+function clearLinkedHighlights() {
+  DOM.textDisplay.querySelectorAll('.linked-subject, .linked-object').forEach(el => {
+    el.classList.remove('linked-subject', 'linked-object');
+    el.style.removeProperty('--link-color');
+  });
 }
 
 function renderAnnotationsList() {
@@ -983,28 +1239,83 @@ function renderAnnotationsList() {
       const color = rt ? rt.color : '#888';
       const isSelected = ann.id === state.selectedRelAnnId;
 
+      // Resolve subject and object entity annotations
+      const subjectAnn = ann.subjectId ? state.annotations.find(a => a.id === ann.subjectId) : null;
+      const objectAnn  = ann.objectId  ? state.annotations.find(a => a.id === ann.objectId)  : null;
+      const subjectEt  = subjectAnn ? state.entityTypes.find(e => e.id === subjectAnn.entityTypeId) : null;
+      const objectEt   = objectAnn  ? state.entityTypes.find(e => e.id === objectAnn.entityTypeId)  : null;
+
       const item = document.createElement('div');
       item.className = 'annotation-item rel-item' + (isSelected ? ' selected' : '');
       item.dataset.relId = ann.id;
 
+      // Striped color bar on left
       const colorBar = document.createElement('div');
       colorBar.className = 'annotation-color-bar';
       colorBar.style.background = `repeating-linear-gradient(45deg, ${color}, ${color} 2px, transparent 2px, transparent 5px)`;
 
+      // Triplet body
       const info = document.createElement('div');
-      info.className = 'annotation-info';
+      info.className = 'annotation-info rel-triplet';
 
-      const textEl = document.createElement('div');
-      textEl.className = 'annotation-text';
-      textEl.title = ann.text;
-      textEl.textContent = ann.text;
+      // ── Subject row ──
+      const subjectRow = document.createElement('div');
+      subjectRow.className = 'triplet-entity triplet-subject';
+      if (subjectAnn && subjectEt) {
+        const dot = document.createElement('span');
+        dot.className = 'triplet-dot';
+        dot.style.background = subjectEt.color;
+        const lbl = document.createElement('span');
+        lbl.className = 'triplet-entity-text';
+        lbl.title = subjectAnn.text;
+        lbl.textContent = subjectAnn.text;
+        subjectRow.appendChild(dot);
+        subjectRow.appendChild(lbl);
+      } else {
+        subjectRow.textContent = '—';
+        subjectRow.style.color = 'var(--text-muted)';
+      }
 
-      const meta = document.createElement('div');
-      meta.className = 'annotation-meta';
-      meta.textContent = `\u2194 ${rt ? rt.name : 'UNKNOWN'}  \u00b7  ${ann.start}\u2013${ann.end}`;
+      // ── Relationship arrow ──
+      const relRow = document.createElement('div');
+      relRow.className = 'triplet-rel';
+      relRow.style.color = color;
+      const relArrow = document.createElement('span');
+      relArrow.className = 'triplet-arrow';
+      relArrow.textContent = '\u2193';
+      const relLbl = document.createElement('span');
+      relLbl.className = 'triplet-rel-name';
+      relLbl.textContent = (rt ? rt.name : 'UNKNOWN') + ' \u2933';
+      relRow.appendChild(relArrow);
+      relRow.appendChild(relLbl);
 
-      info.appendChild(textEl);
-      info.appendChild(meta);
+      // Keyword + position
+      const kwRow = document.createElement('div');
+      kwRow.className = 'annotation-meta';
+      kwRow.textContent = `"${ann.text}"  \u00b7  ${ann.start}\u2013${ann.end}`;
+
+      // ── Object row ──
+      const objectRow = document.createElement('div');
+      objectRow.className = 'triplet-entity triplet-object';
+      if (objectAnn && objectEt) {
+        const dot = document.createElement('span');
+        dot.className = 'triplet-dot';
+        dot.style.background = objectEt.color;
+        const lbl = document.createElement('span');
+        lbl.className = 'triplet-entity-text';
+        lbl.title = objectAnn.text;
+        lbl.textContent = objectAnn.text;
+        objectRow.appendChild(dot);
+        objectRow.appendChild(lbl);
+      } else {
+        objectRow.textContent = '—';
+        objectRow.style.color = 'var(--text-muted)';
+      }
+
+      info.appendChild(subjectRow);
+      info.appendChild(relRow);
+      info.appendChild(objectRow);
+      info.appendChild(kwRow);
 
       const delBtn = document.createElement('button');
       delBtn.className = 'annotation-delete-btn';

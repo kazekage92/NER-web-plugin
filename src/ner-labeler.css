@@ -517,6 +517,27 @@ kbd {
   outline-offset: 1px;
 }
 
+/* ===== Linked entity highlights (subject / object of hovered/selected relationship) ===== */
+.ner-span.linked-subject,
+.ner-span.linked-object {
+  outline: 2px solid var(--link-color, #fff);
+  outline-offset: 2px;
+  filter: brightness(1.25);
+  border-radius: 3px;
+}
+
+.ner-span.linked-subject::before,
+.ner-span.linked-object::before {
+  content: '';
+  position: absolute;
+  bottom: -4px;
+  left: 0; right: 0;
+  height: 2px;
+  background: var(--link-color, #fff);
+  border-radius: 1px;
+  opacity: .7;
+}
+
 /* ===== Annotations Panel ===== */
 .annotations-list {
   flex: 1;
@@ -599,6 +620,57 @@ kbd {
 }
 .annotation-item:hover .annotation-delete-btn { opacity: 1; }
 .annotation-delete-btn:hover { color: var(--danger); }
+
+/* ===== Relationship triplet card ===== */
+.rel-triplet {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.triplet-entity {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  font-size: .8rem;
+  font-family: var(--font-mono);
+  color: var(--text-primary);
+}
+
+.triplet-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex-shrink: 0;
+  display: inline-block;
+}
+
+.triplet-entity-text {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 130px;
+}
+
+.triplet-rel {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding-left: 6px;
+  font-size: .72rem;
+  font-weight: 700;
+  letter-spacing: .03em;
+}
+
+.triplet-arrow {
+  opacity: .7;
+  font-size: .8rem;
+  line-height: 1;
+}
+
+.triplet-rel-name {
+  font-style: italic;
+}
 
 /* ===== Badge ===== */
 .badge {
