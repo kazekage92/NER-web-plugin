@@ -1983,8 +1983,8 @@ function renderRelationshipArcs(adjustPadding = true) {
   // ── Level assignment ──────────────────────────────────────────────────────
   // Sort by span length so shorter arcs get lower (closer to text) levels,
   // and assign levels greedily to avoid arcs crossing each other.
-  const LEVEL_H = 48;  // vertical pixels per arc level
-  const LABEL_H = 18;  // label box height (font 10 + padding 2×3 + slack)
+  const LEVEL_H = 34;  // vertical pixels per arc level (compact badges need less room)
+  const LABEL_H = 16;  // badge height used for padding calculation
 
   arcs.sort((a, b) =>
     (Math.abs(a.objX - a.subX) + Math.abs(a.objY - a.subY)) -
@@ -2035,30 +2035,48 @@ function renderRelationshipArcs(adjustPadding = true) {
 }
 
 /**
- * Draws one bracket arc + label box + subject dot + object arrowhead into svg.
+ * 3-character abbreviation used on compact arc badges.
+ * Takes the first word of the label (stripping punctuation) and returns its
+ * first 3 uppercase letters, so "Acquires" → "ACQ", "Partners With" → "PAR".
+ */
+function _arcAbbrev(label) {
+  return label.replace(/[^A-Za-z ]/g, ' ').trim().split(/\s+/)[0].slice(0, 3).toUpperCase();
+}
+
+/**
+ * Draws one bracket arc into svg.
+ *
+ * Unselected arcs use a compact colour-coded pill badge (3-char abbreviation)
+ * at the arc apex so many arcs can coexist without visual clutter.
+ * The selected arc shows the full label box so the user always has context.
+ * A native SVG <title> provides a hover tooltip with the full label.
  */
 function _drawArc(svg, NS, arc) {
   const { subX, subY, objX, objY, apexY, color, label, selected, isAttr } = arc;
-  const midX  = (subX + objX) / 2;
+  const midX = (subX + objX) / 2;
   // Corner radius — capped so it never exceeds half the horizontal span
-  const R     = Math.max(0, Math.min(7, (Math.abs(objX - subX) / 2) - 1));
-  // Attribute arcs are thinner and more transparent than relationship arcs
-  const SW    = isAttr ? (selected ? 1.8 : 1.2) : (selected ? 2.5 : 1.5);
-  const alpha = isAttr ? (selected ? 0.9 : 0.55) : (selected ? 1 : 0.8);
+  const R    = Math.max(0, Math.min(7, (Math.abs(objX - subX) / 2) - 1));
+
+  // Unselected arcs are thinner and more transparent to stay in the background
+  const SW    = isAttr ? (selected ? 1.8 : 1.0) : (selected ? 2.5 : 1.2);
+  const alpha = isAttr ? (selected ? 0.9 : 0.4) : (selected ? 1.0 : 0.45);
 
   const g = document.createElementNS(NS, 'g');
 
+  // Native browser tooltip — shows full label on hover at no interaction cost
+  const title = document.createElementNS(NS, 'title');
+  title.textContent = label;
+  g.appendChild(title);
+
   // ── Bracket path ────────────────────────────────────────────────────────
-  // Normalise so leftX ≤ rightX, and track which end is the subject/object
   const isSubLeft = subX <= objX;
   const lx = isSubLeft ? subX : objX;
   const rx = isSubLeft ? objX : subX;
-  const ly = isSubLeft ? subY : objY;   // y at the left connection point
-  const ry = isSubLeft ? objY : subY;   // y at the right connection point
+  const ly = isSubLeft ? subY : objY;
+  const ry = isSubLeft ? objY : subY;
 
   let d;
   if (rx - lx <= 2 * R + 2) {
-    // Entities too close — fall back to a smooth quadratic bump
     d = `M ${lx} ${ly} Q ${midX} ${apexY} ${rx} ${ry}`;
   } else {
     d = [
@@ -2084,13 +2102,13 @@ function _drawArc(svg, NS, arc) {
   const dot = document.createElementNS(NS, 'circle');
   dot.setAttribute('cx', String(subX));
   dot.setAttribute('cy', String(subY));
-  dot.setAttribute('r', '3.5');
+  dot.setAttribute('r', selected ? '3.5' : '2.5');
   dot.setAttribute('fill', color);
   dot.setAttribute('opacity', String(alpha));
   g.appendChild(dot);
 
   // ── Object — downward arrowhead ─────────────────────────────────────────
-  const AS = 4.5;
+  const AS = selected ? 4.5 : 3;
   const tri = document.createElementNS(NS, 'polygon');
   tri.setAttribute('points',
     `${objX},${objY} ${objX - AS},${objY - AS * 1.7} ${objX + AS},${objY - AS * 1.7}`);
@@ -2098,27 +2116,19 @@ function _drawArc(svg, NS, arc) {
   tri.setAttribute('opacity', String(alpha));
   g.appendChild(tri);
 
-  // ── Relationship label box ───────────────────────────────────────────────
-  const FONT = 10;
-  const PX   = 6;
-  const PY   = 3;
-  const LW   = Math.max(label.length * 6.3 + PX * 2, 36);
-  const LH   = FONT + PY * 2;
-  const bx   = midX - LW / 2;
-  const by   = apexY - LH / 2;
-
-  const rect = document.createElementNS(NS, 'rect');
-  rect.setAttribute('x', String(bx));
-  rect.setAttribute('y', String(by));
-  rect.setAttribute('width',  String(LW));
-  rect.setAttribute('height', String(LH));
-  rect.setAttribute('rx', '3');
-  rect.setAttribute('fill', color);
-  rect.setAttribute('opacity', selected ? '1' : '0.9');
-  g.appendChild(rect);
-
-  // White halo ring when selected
+  // ── Label: full box for selected arc, compact pill badge for all others ──
   if (selected) {
+    // Full label box — identical to the original design so the user has clear
+    // context on whichever arc they clicked.
+    const FONT = 10;
+    const PX   = 6;
+    const PY   = 3;
+    const LW   = Math.max(label.length * 6.3 + PX * 2, 36);
+    const LH   = FONT + PY * 2;
+    const bx   = midX - LW / 2;
+    const by   = apexY - LH / 2;
+
+    // White halo ring so the selected label pops above other badges
     const halo = document.createElementNS(NS, 'rect');
     halo.setAttribute('x', String(bx - 2));
     halo.setAttribute('y', String(by - 2));
@@ -2127,22 +2137,63 @@ function _drawArc(svg, NS, arc) {
     halo.setAttribute('rx', '4');
     halo.setAttribute('fill', 'none');
     halo.setAttribute('stroke', '#fff');
-    halo.setAttribute('stroke-width', '1.5');
+    halo.setAttribute('stroke-width', '2');
     g.appendChild(halo);
-  }
 
-  const txt = document.createElementNS(NS, 'text');
-  txt.setAttribute('x', String(midX));
-  txt.setAttribute('y', String(by + PY + FONT - 1));
-  txt.setAttribute('text-anchor', 'middle');
-  txt.setAttribute('font-size',   `${FONT}px`);
-  txt.setAttribute('font-family',
-    '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif');
-  txt.setAttribute('font-weight', '700');
-  txt.setAttribute('fill', contrastColor(color));
-  txt.setAttribute('pointer-events', 'none');
-  txt.textContent = label;
-  g.appendChild(txt);
+    const rect = document.createElementNS(NS, 'rect');
+    rect.setAttribute('x', String(bx));
+    rect.setAttribute('y', String(by));
+    rect.setAttribute('width',  String(LW));
+    rect.setAttribute('height', String(LH));
+    rect.setAttribute('rx', '3');
+    rect.setAttribute('fill', color);
+    g.appendChild(rect);
+
+    const txt = document.createElementNS(NS, 'text');
+    txt.setAttribute('x', String(midX));
+    txt.setAttribute('y', String(by + PY + FONT - 1));
+    txt.setAttribute('text-anchor', 'middle');
+    txt.setAttribute('font-size',   `${FONT}px`);
+    txt.setAttribute('font-family',
+      '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif');
+    txt.setAttribute('font-weight', '700');
+    txt.setAttribute('fill', contrastColor(color));
+    txt.setAttribute('pointer-events', 'none');
+    txt.textContent = label;
+    g.appendChild(txt);
+
+  } else {
+    // Compact pill badge: 3-char abbreviation in a small rounded rect.
+    // Much smaller than the full label box so dozens of arcs can coexist
+    // without crowding — full label is always available via hover tooltip.
+    const BW   = 22;   // badge width  (px)
+    const BH   = 12;   // badge height (px)
+    const BFNT = 7.5;  // badge font size (px)
+
+    const badge = document.createElementNS(NS, 'rect');
+    badge.setAttribute('x', String(midX - BW / 2));
+    badge.setAttribute('y', String(apexY - BH / 2));
+    badge.setAttribute('width',  String(BW));
+    badge.setAttribute('height', String(BH));
+    badge.setAttribute('rx', '5');
+    badge.setAttribute('fill', color);
+    badge.setAttribute('opacity', '0.82');
+    g.appendChild(badge);
+
+    const btxt = document.createElementNS(NS, 'text');
+    btxt.setAttribute('x', String(midX));
+    // SVG text y is the baseline; centre it inside the badge
+    btxt.setAttribute('y', String(apexY + BFNT / 2 - 1));
+    btxt.setAttribute('text-anchor', 'middle');
+    btxt.setAttribute('font-size',   `${BFNT}px`);
+    btxt.setAttribute('font-family',
+      '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif');
+    btxt.setAttribute('font-weight', '700');
+    btxt.setAttribute('fill', contrastColor(color));
+    btxt.setAttribute('pointer-events', 'none');
+    btxt.textContent = _arcAbbrev(label);
+    g.appendChild(btxt);
+  }
 
   svg.appendChild(g);
 }
