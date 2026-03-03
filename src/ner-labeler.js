@@ -1666,6 +1666,10 @@ function renderTextDisplay() {
       state.selectedAnnotationId  = null;
       state.selectedRelAnnId      = null;
       render();
+      if (state.selectedAttrAnnId) {
+        const card = DOM.annotationsList.querySelector(`[data-attr-id="${attrId}"]`);
+        if (card) card.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+      }
     });
     span.addEventListener('mouseenter', e => {
       const ann = state.attrAnnotations.find(a => a.id === attrId);
@@ -1689,6 +1693,10 @@ function renderTextDisplay() {
       state.selectedRelAnnId = null;
       state.selectedAttrAnnId = null;
       render();
+      if (state.selectedAnnotationId) {
+        const card = DOM.annotationsList.querySelector(`[data-ann-id="${annId}"]`);
+        if (card) card.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+      }
     });
     span.addEventListener('mouseenter', e => {
       const ann = state.annotations.find(a => a.id === annId);
@@ -1708,6 +1716,10 @@ function renderTextDisplay() {
       state.selectedAnnotationId = null;
       state.selectedAttrAnnId = null;
       render();
+      if (state.selectedRelAnnId) {
+        const card = DOM.annotationsList.querySelector(`[data-rel-id="${relId}"]`);
+        if (card) card.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+      }
     });
     span.addEventListener('mouseenter', e => {
       const ann = state.relAnnotations.find(a => a.id === relId);
