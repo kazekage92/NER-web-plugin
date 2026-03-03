@@ -548,23 +548,23 @@ kbd {
 }
 
 /* ===== Relationship spans ===== */
+/* Relationships are shown primarily as arcs above the text.
+   The inline span is kept only for click-target / arc anchoring;
+   it renders as nearly-invisible plain text with a subtle dotted underline. */
 .ner-rel-span {
-  border-radius: 3px;
-  padding: 1px 2px;
+  border-radius: 2px;
+  padding: 0 1px;
   cursor: pointer;
   position: relative;
-  transition: filter var(--transition);
-  white-space: pre;
-  font-style: italic;
+  /* colour and border-bottom are set inline per relationship type */
 }
 
 .ner-rel-span:hover {
-  filter: brightness(1.15);
+  background: rgba(255,255,255,0.08);
 }
 
 .ner-rel-span.selected {
-  outline: 2px solid #fff;
-  outline-offset: 1px;
+  border-radius: 3px;
 }
 
 /* ===== Linked entity highlights (subject / object of hovered/selected relationship) ===== */
