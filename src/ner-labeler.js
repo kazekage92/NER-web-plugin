@@ -130,8 +130,12 @@ function bindEvents() {
     DOM.charCount.textContent = `${DOM.rawTextInput.value.length} characters`;
   });
 
+  // Paste appends at the cursor naturally — update char count after the
+  // paste event has populated the textarea value.
   DOM.rawTextInput.addEventListener('paste', () => {
-    setTimeout(handleAutoLabel, 0);
+    setTimeout(() => {
+      DOM.charCount.textContent = `${DOM.rawTextInput.value.length} characters`;
+    }, 0);
   });
 
   (DOM.btnAutoLabel || document.getElementById('btn-auto-label'))
