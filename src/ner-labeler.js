@@ -2025,11 +2025,13 @@ function renderRelationshipArcs(adjustPadding = true) {
     return;
   }
 
-  // ── Apex positions — strictly within the padding zone ────────────────────
-  // apexY is measured from the container top, level 0 is closest to the text.
-  // Because the bar never descends to entity Y, no lines cross text content.
+  // ── Apex positions — level 0 closest to text, maxLevel farthest ──────────
+  // Ordering is inverted so shorter arcs (level 0) sit nearest to the entities
+  // they annotate, matching brat / CoNLL visual convention.
+  // apexY is purely container-relative — no entity Y involved — so the bar
+  // never descends into the text area regardless of which line the entity is on.
   arcs.forEach(arc => {
-    arc.apexY = cRect.top + TOP_MARG + arc.level * LEVEL_H;
+    arc.apexY = cRect.top + TOP_MARG + (maxLevel - arc.level) * LEVEL_H;
   });
 
   if (!arcs.length) return;
@@ -2103,6 +2105,24 @@ function _drawArc(svg, NS, arc) {
   path.setAttribute('stroke-opacity', String(alpha));
   if (isAttr) path.setAttribute('stroke-dasharray', '4 3');
   g.appendChild(path);
+
+  // ── Thin dashed connectors: hook-end → entity ────────────────────────────
+  // Very low opacity + wide-gap dash so they read as a subtle visual guide,
+  // not a dominant element — they show which entity each arc end belongs to
+  // without the thick opaque stems that used to cross through text lines.
+  const connOpacity = selected ? 0.38 : 0.2;
+  [[subX, subY], [objX, objY]].forEach(([ex, ey]) => {
+    const cn = document.createElementNS(NS, 'line');
+    cn.setAttribute('x1', String(ex));
+    cn.setAttribute('y1', String(apexY + HOOK));
+    cn.setAttribute('x2', String(ex));
+    cn.setAttribute('y2', String(ey));
+    cn.setAttribute('stroke', color);
+    cn.setAttribute('stroke-width', '0.8');
+    cn.setAttribute('stroke-opacity', String(connOpacity));
+    cn.setAttribute('stroke-dasharray', '3 6');
+    g.appendChild(cn);
+  });
 
   // ── Subject — filled dot ────────────────────────────────────────────────
   const dot = document.createElementNS(NS, 'circle');
