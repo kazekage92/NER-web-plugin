@@ -1137,14 +1137,41 @@ function handleExportXlsx() {
     return pre + state.text.slice(s, e).replace(/\r?\n/g, ' ') + post;
   }
 
+  // ── Helper: get attribute values for a given parent, keyed by attr type name ─
+  // Returns { 'Date': 'Q1 2024; Q2 2024', 'Value': 'RM 50m', ... }
+  function attrsFor(parentId, parentType) {
+    const map = {};
+    state.attrAnnotations
+      .filter(a => a.parentId === parentId && a.parentType === parentType)
+      .forEach(a => {
+        const at = state.attrTypes.find(t => t.id === a.attrTypeId);
+        const key = at ? at.name : '?';
+        map[key] = map[key] ? map[key] + '; ' + a.text : a.text;
+      });
+    return map;
+  }
+
+  // Collect the ordered list of attribute type names that have any data,
+  // so both sheets share the same column names.
+  const relAttrTypes = new Set();
+  const entAttrTypes = new Set();
+  state.attrAnnotations.forEach(a => {
+    const at = state.attrTypes.find(t => t.id === a.attrTypeId);
+    if (!at) return;
+    if (a.parentType === 'relationship') relAttrTypes.add(at.name);
+    if (a.parentType === 'entity')       entAttrTypes.add(at.name);
+  });
+  const relAttrCols = [...relAttrTypes];
+  const entAttrCols = [...entAttrTypes];
+
   // ── Sheet 1: Relationships ─────────────────────────────────────────────────
-  // Columns: Subject | Subject Type | Relationship Type | Keyword in Text |
-  //          Object  | Object Type  | Rel Start | Rel End | Context
+  // Fixed columns + one column per attribute type linked to relationships
   const relHeader = [
     'Subject', 'Subject Type',
     'Relationship Type', 'Keyword in Text',
     'Object', 'Object Type',
     'Rel Start', 'Rel End', 'Context (±60 chars)',
+    ...relAttrCols,          // e.g. 'Date', 'Value', 'Percentage' …
   ];
 
   const relRows = state.relAnnotations.map(ra => {
@@ -1153,6 +1180,7 @@ function handleExportXlsx() {
     const objAnn = state.annotations.find(a => a.id === ra.objectId);
     const subEt  = subAnn ? state.entityTypes.find(e => e.id === subAnn.entityTypeId) : null;
     const objEt  = objAnn ? state.entityTypes.find(e => e.id === objAnn.entityTypeId) : null;
+    const atMap  = attrsFor(ra.id, 'relationship');
 
     return [
       subAnn ? subAnn.text : '',
@@ -1164,6 +1192,7 @@ function handleExportXlsx() {
       ra.start,
       ra.end,
       ctx(ra.start, ra.end),
+      ...relAttrCols.map(col => atMap[col] || ''),
     ];
   });
 
@@ -1178,26 +1207,23 @@ function handleExportXlsx() {
     { wch: 10 }, // Rel Start
     { wch: 10 }, // Rel End
     { wch: 70 }, // Context
+    ...relAttrCols.map(() => ({ wch: 24 })),
   ];
   XLSX.utils.book_append_sheet(wb, wsRel, 'Relationships');
 
-  // ── Sheet 2: Entities (attributes for each annotated mention) ──────────────
-  // Columns: # | Entity Text | Entity Type | Start | End |
-  //          Linked Relationships | Context
-  //
-  // "Linked Relationships" shows every relationship where this entity appears
-  // as subject or object, giving a full picture of its role in the document.
+  // ── Sheet 2: Entities ──────────────────────────────────────────────────────
+  // Fixed columns + one column per attribute type linked to entities
   const entHeader = [
     '#', 'Entity Text', 'Entity Type',
     'Start', 'End',
     'Role in Relationships',
     'Context (±60 chars)',
+    ...entAttrCols,          // e.g. 'Location', 'Nationality' …
   ];
 
   const entRows = state.annotations.map((a, i) => {
     const et = state.entityTypes.find(e => e.id === a.entityTypeId);
 
-    // Gather relationship roles for this entity
     const roles = [];
     state.relAnnotations.forEach(ra => {
       const rt = state.relationshipTypes.find(r => r.id === ra.relTypeId);
@@ -1211,6 +1237,8 @@ function handleExportXlsx() {
       }
     });
 
+    const atMap = attrsFor(a.id, 'entity');
+
     return [
       i + 1,
       a.text,
@@ -1219,6 +1247,7 @@ function handleExportXlsx() {
       a.end,
       roles.join('; ') || '—',
       ctx(a.start, a.end),
+      ...entAttrCols.map(col => atMap[col] || ''),
     ];
   });
 
@@ -1231,47 +1260,9 @@ function handleExportXlsx() {
     { wch: 8  }, // End
     { wch: 50 }, // Role in Relationships
     { wch: 70 }, // Context
+    ...entAttrCols.map(() => ({ wch: 24 })),
   ];
   XLSX.utils.book_append_sheet(wb, wsEnt, 'Entities');
-
-  // ── Sheet 3: Attributes ────────────────────────────────────────────────────
-  // Columns: # | Attribute Text | Attribute Type | Parent Type | Parent Text |
-  //          Start | End | Context (±60 chars)
-  const attrHeader = [
-    '#', 'Attribute Text', 'Attribute Type',
-    'Parent Type', 'Parent Text',
-    'Start', 'End', 'Context (±60 chars)',
-  ];
-
-  const attrRows = state.attrAnnotations.map((a, i) => {
-    const at     = state.attrTypes.find(t => t.id === a.attrTypeId);
-    const parent = a.parentType === 'entity'
-      ? state.annotations.find(e => e.id === a.parentId)
-      : state.relAnnotations.find(r => r.id === a.parentId);
-    return [
-      i + 1,
-      a.text,
-      at ? at.name : '',
-      a.parentType || '',
-      parent ? parent.text : '',
-      a.start,
-      a.end,
-      ctx(a.start, a.end),
-    ];
-  });
-
-  const wsAttr = XLSX.utils.aoa_to_sheet([attrHeader, ...attrRows]);
-  wsAttr['!cols'] = [
-    { wch: 5  }, // #
-    { wch: 30 }, // Attribute Text
-    { wch: 14 }, // Attribute Type
-    { wch: 14 }, // Parent Type
-    { wch: 30 }, // Parent Text
-    { wch: 8  }, // Start
-    { wch: 8  }, // End
-    { wch: 70 }, // Context
-  ];
-  XLSX.utils.book_append_sheet(wb, wsAttr, 'Attributes');
 
   XLSX.writeFile(wb, 'ner-annotations.xlsx');
 }
@@ -1814,7 +1805,10 @@ function renderRelationshipArcs() {
   // Clear previous arcs
   [...svg.childNodes].forEach(n => n.remove());
 
-  if (state.mode !== 'labeling' || !state.relAnnotations.length) return;
+  if (state.mode !== 'labeling' || !state.relAnnotations.length) {
+    DOM.textDisplay.style.paddingTop = '';  // restore CSS default
+    return;
+  }
 
   const cRect = DOM.textDisplay.getBoundingClientRect();
   const arcs  = [];
@@ -1845,12 +1839,12 @@ function renderRelationshipArcs() {
     });
   }
 
-  if (!arcs.length) return;
-
   // ── Level assignment ──────────────────────────────────────────────────────
   // Sort by span length so shorter arcs get lower (closer to text) levels,
   // and assign levels greedily to avoid arcs crossing each other.
-  const LEVEL_H = 52;
+  const LEVEL_H = 48;  // vertical pixels per arc level
+  const LABEL_H = 18;  // label box height (font 10 + padding 2×3 + slack)
+
   arcs.sort((a, b) =>
     (Math.abs(a.objX - a.subX) + Math.abs(a.objY - a.subY)) -
     (Math.abs(b.objX - b.subX) + Math.abs(b.objY - b.subY))
@@ -1865,11 +1859,33 @@ function renderRelationshipArcs() {
     }
     (slots[lvl] = slots[lvl] || []).push([lo, hi]);
     arc.level = lvl;
+  });
+
+  // ── Dynamic padding-top so arcs sit in reserved whitespace, not over text ─
+  // Required space = (maxLevel + 1) levels × LEVEL_H + label height + margin
+  const maxLevel = arcs.length ? Math.max(...arcs.map(a => a.level)) : -1;
+  const BASE_PAD  = 20;  // original CSS padding-top when no arcs
+  const neededPad = maxLevel >= 0
+    ? (maxLevel + 1) * LEVEL_H + LABEL_H + 16
+    : BASE_PAD;
+  const currentPad = parseFloat(DOM.textDisplay.style.paddingTop || BASE_PAD);
+
+  if (Math.abs(currentPad - neededPad) > 2) {
+    // Padding changed — update and schedule a re-measure so positions are fresh
+    DOM.textDisplay.style.paddingTop = neededPad + 'px';
+    requestAnimationFrame(renderRelationshipArcs);
+    return;
+  }
+
+  // Positions are now stable — compute final apexY for each arc
+  arcs.forEach(arc => {
     arc.apexY = Math.max(
-      Math.min(arc.subY, arc.objY) - LEVEL_H * (lvl + 1),
-      cRect.top + 14    // never clip above the container
+      Math.min(arc.subY, arc.objY) - LEVEL_H * (arc.level + 1),
+      cRect.top + LABEL_H / 2 + 4   // never clip label above the container
     );
   });
+
+  if (!arcs.length) return;
 
   // Draw unselected first so selected arcs render on top
   [...arcs.filter(a => !a.selected), ...arcs.filter(a => a.selected)]
