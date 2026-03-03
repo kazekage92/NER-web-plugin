@@ -13,7 +13,8 @@
       <h1 class="app-title">NER Entity Labeling Plugin</h1>
       <div class="header-actions">
         <button id="btn-import" class="btn btn-secondary" title="Import JSON">Import</button>
-        <button id="btn-export" class="btn btn-primary" title="Export labeled data">Export JSON</button>
+        <button id="btn-export" class="btn btn-secondary" title="Export labeled data as JSON">Export JSON</button>
+        <button id="btn-export-xlsx" class="btn btn-primary" title="Export relationships and entities as Excel workbook">Export XLSX</button>
         <input type="file" id="import-file" accept=".json" style="display:none" />
       </div>
     </header>
@@ -122,6 +123,8 @@
     </div>
   </div>
 
+  <!-- SheetJS for XLSX export (community edition, Apache 2.0) -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js" crossorigin="anonymous"></script>
   <script src="src/ner-labeler.js"></script>
 </body>
 </html>

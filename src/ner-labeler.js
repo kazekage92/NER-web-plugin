@@ -81,6 +81,7 @@ const DOM = {
   btnClearText:       $('btn-clear-text'),
   btnClearLabels:     $('btn-clear-labels'),
   btnExport:          $('btn-export'),
+  btnExportXlsx:      $('btn-export-xlsx'),
   btnImport:          $('btn-import'),
   importFile:         $('import-file'),
   annotationsList:    $('annotations-list'),
@@ -160,6 +161,7 @@ function bindEvents() {
   });
 
   DOM.btnExport.addEventListener('click', handleExport);
+  DOM.btnExportXlsx.addEventListener('click', handleExportXlsx);
   DOM.btnImport.addEventListener('click', () => DOM.importFile.click());
   DOM.importFile.addEventListener('change', handleImport);
 
@@ -926,6 +928,134 @@ function handleExport() {
     }),
   };
   downloadJSON(output, 'ner-annotations.json');
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// XLSX Export — two-sheet workbook
+//   Sheet "Relationships" : one row per relationship triplet
+//   Sheet "Entities"      : one row per entity annotation (attributes sheet)
+// ─────────────────────────────────────────────────────────────────────────────
+
+function handleExportXlsx() {
+  if (typeof XLSX === 'undefined') {
+    alert('Excel library not loaded — check your internet connection and reload the page.');
+    return;
+  }
+  if (!state.text) {
+    alert('No document to export.');
+    return;
+  }
+
+  const wb = XLSX.utils.book_new();
+
+  // ── Helper: short context snippet around a character range ─────────────────
+  function ctx(start, end) {
+    const PAD = 60;
+    const s = Math.max(0, start - PAD);
+    const e = Math.min(state.text.length, end + PAD);
+    const pre  = s > 0 ? '…' : '';
+    const post = e < state.text.length ? '…' : '';
+    return pre + state.text.slice(s, e).replace(/\r?\n/g, ' ') + post;
+  }
+
+  // ── Sheet 1: Relationships ─────────────────────────────────────────────────
+  // Columns: Subject | Subject Type | Relationship Type | Keyword in Text |
+  //          Object  | Object Type  | Rel Start | Rel End | Context
+  const relHeader = [
+    'Subject', 'Subject Type',
+    'Relationship Type', 'Keyword in Text',
+    'Object', 'Object Type',
+    'Rel Start', 'Rel End', 'Context (±60 chars)',
+  ];
+
+  const relRows = state.relAnnotations.map(ra => {
+    const rt     = state.relationshipTypes.find(r => r.id === ra.relTypeId);
+    const subAnn = state.annotations.find(a => a.id === ra.subjectId);
+    const objAnn = state.annotations.find(a => a.id === ra.objectId);
+    const subEt  = subAnn ? state.entityTypes.find(e => e.id === subAnn.entityTypeId) : null;
+    const objEt  = objAnn ? state.entityTypes.find(e => e.id === objAnn.entityTypeId) : null;
+
+    return [
+      subAnn ? subAnn.text : '',
+      subEt  ? subEt.name  : '',
+      rt     ? rt.name     : '',
+      ra.text,
+      objAnn ? objAnn.text : '',
+      objEt  ? objEt.name  : '',
+      ra.start,
+      ra.end,
+      ctx(ra.start, ra.end),
+    ];
+  });
+
+  const wsRel = XLSX.utils.aoa_to_sheet([relHeader, ...relRows]);
+  wsRel['!cols'] = [
+    { wch: 32 }, // Subject
+    { wch: 14 }, // Subject Type
+    { wch: 22 }, // Relationship Type
+    { wch: 22 }, // Keyword in Text
+    { wch: 32 }, // Object
+    { wch: 14 }, // Object Type
+    { wch: 10 }, // Rel Start
+    { wch: 10 }, // Rel End
+    { wch: 70 }, // Context
+  ];
+  XLSX.utils.book_append_sheet(wb, wsRel, 'Relationships');
+
+  // ── Sheet 2: Entities (attributes for each annotated mention) ──────────────
+  // Columns: # | Entity Text | Entity Type | Start | End |
+  //          Linked Relationships | Context
+  //
+  // "Linked Relationships" shows every relationship where this entity appears
+  // as subject or object, giving a full picture of its role in the document.
+  const entHeader = [
+    '#', 'Entity Text', 'Entity Type',
+    'Start', 'End',
+    'Role in Relationships',
+    'Context (±60 chars)',
+  ];
+
+  const entRows = state.annotations.map((a, i) => {
+    const et = state.entityTypes.find(e => e.id === a.entityTypeId);
+
+    // Gather relationship roles for this entity
+    const roles = [];
+    state.relAnnotations.forEach(ra => {
+      const rt = state.relationshipTypes.find(r => r.id === ra.relTypeId);
+      const relName = rt ? rt.name : '?';
+      if (ra.subjectId === a.id) {
+        const obj = state.annotations.find(x => x.id === ra.objectId);
+        roles.push(`Subject of "${relName}" → ${obj ? obj.text : '?'}`);
+      } else if (ra.objectId === a.id) {
+        const sub = state.annotations.find(x => x.id === ra.subjectId);
+        roles.push(`Object of "${relName}" ← ${sub ? sub.text : '?'}`);
+      }
+    });
+
+    return [
+      i + 1,
+      a.text,
+      et ? et.name : '',
+      a.start,
+      a.end,
+      roles.join('; ') || '—',
+      ctx(a.start, a.end),
+    ];
+  });
+
+  const wsEnt = XLSX.utils.aoa_to_sheet([entHeader, ...entRows]);
+  wsEnt['!cols'] = [
+    { wch: 5  }, // #
+    { wch: 32 }, // Entity Text
+    { wch: 14 }, // Entity Type
+    { wch: 8  }, // Start
+    { wch: 8  }, // End
+    { wch: 50 }, // Role in Relationships
+    { wch: 70 }, // Context
+  ];
+  XLSX.utils.book_append_sheet(wb, wsEnt, 'Entities');
+
+  XLSX.writeFile(wb, 'ner-annotations.xlsx');
 }
 
 function handleImport(e) {
