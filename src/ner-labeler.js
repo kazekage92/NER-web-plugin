@@ -1980,20 +1980,26 @@ function renderRelationshipArcs(adjustPadding = true) {
     });
   }
 
-  // ── Level assignment ──────────────────────────────────────────────────────
-  // Sort by span length so shorter arcs get lower (closer to text) levels,
-  // and assign levels greedily to avoid arcs crossing each other.
-  const LEVEL_H = 34;  // vertical pixels per arc level (compact badges need less room)
-  const LABEL_H = 16;  // badge height used for padding calculation
+  // ── Layout constants ──────────────────────────────────────────────────────
+  // Arcs are drawn entirely in the padding-top zone as floating bars so their
+  // lines never cross through the text content below.
+  const LEVEL_H  = 28;   // px between arc levels (apex-to-apex)
+  const HOOK     = 7;    // downward tick length at each end of the horizontal bar
+  const TOP_MARG = 10;   // px from container top to the first (level-0) arc apex
 
-  arcs.sort((a, b) =>
-    (Math.abs(a.objX - a.subX) + Math.abs(a.objY - a.subY)) -
-    (Math.abs(b.objX - b.subX) + Math.abs(b.objY - b.subY))
-  );
-  const slots = [];  // slots[level] = [[xMin, xMax], ...]
+  // ── Level assignment ──────────────────────────────────────────────────────
+  // Sort by horizontal span so shorter arcs sit at lower (text-adjacent) levels.
+  // Collision uses the union of the entity X extents AND the badge footprint so
+  // badges at the same level can never overlap each other.
+  const BADGE_HW = 13;   // half badge-width + margin used for collision
+  arcs.sort((a, b) => Math.abs(a.objX - a.subX) - Math.abs(b.objX - b.subX));
+
+  const slots = [];
   arcs.forEach(arc => {
-    const lo = Math.min(arc.subX, arc.objX) - 6;
-    const hi = Math.max(arc.subX, arc.objX) + 6;
+    const midX = (arc.subX + arc.objX) / 2;
+    arc.midX   = midX;
+    const lo = Math.min(arc.subX, arc.objX, midX - BADGE_HW) - 2;
+    const hi = Math.max(arc.subX, arc.objX, midX + BADGE_HW) + 2;
     let lvl = 0;
     for (; lvl < 20; lvl++) {
       if (!slots[lvl] || !slots[lvl].some(([l, r]) => lo < r && hi > l)) break;
@@ -2002,29 +2008,28 @@ function renderRelationshipArcs(adjustPadding = true) {
     arc.level = lvl;
   });
 
-  // ── Dynamic padding-top so arcs sit in reserved whitespace, not over text ─
-  // Required space = (maxLevel + 1) levels × LEVEL_H + label height + margin
+  // ── Dynamic padding-top ───────────────────────────────────────────────────
+  // Reserve exactly enough space above the text for all arc levels.
+  // Formula: top-margin + one slot per level + hook height + gap before text.
   const maxLevel = arcs.length ? Math.max(...arcs.map(a => a.level)) : -1;
-  const BASE_PAD  = 20;  // original CSS padding-top when no arcs
+  const BASE_PAD  = 20;
+  // Space needed = top-margin + apex of last level + hook + gap before text
   const neededPad = maxLevel >= 0
-    ? (maxLevel + 1) * LEVEL_H + LABEL_H + 16
+    ? TOP_MARG + maxLevel * LEVEL_H + HOOK + 4
     : BASE_PAD;
   const currentPad = parseFloat(DOM.textDisplay.style.paddingTop || BASE_PAD);
 
   if (adjustPadding && Math.abs(currentPad - neededPad) > 2) {
-    // Padding changed — update once, then schedule one final draw without
-    // further adjustment so we never loop (paddingTop change fires scroll).
     DOM.textDisplay.style.paddingTop = neededPad + 'px';
     requestAnimationFrame(() => renderRelationshipArcs(false));
     return;
   }
 
-  // Positions are now stable — compute final apexY for each arc
+  // ── Apex positions — strictly within the padding zone ────────────────────
+  // apexY is measured from the container top, level 0 is closest to the text.
+  // Because the bar never descends to entity Y, no lines cross text content.
   arcs.forEach(arc => {
-    arc.apexY = Math.max(
-      Math.min(arc.subY, arc.objY) - LEVEL_H * (arc.level + 1),
-      cRect.top + LABEL_H / 2 + 4   // never clip label above the container
-    );
+    arc.apexY = cRect.top + TOP_MARG + arc.level * LEVEL_H;
   });
 
   if (!arcs.length) return;
@@ -2053,13 +2058,11 @@ function _arcAbbrev(label) {
  */
 function _drawArc(svg, NS, arc) {
   const { subX, subY, objX, objY, apexY, color, label, selected, isAttr } = arc;
-  const midX = (subX + objX) / 2;
-  // Corner radius — capped so it never exceeds half the horizontal span
-  const R    = Math.max(0, Math.min(7, (Math.abs(objX - subX) / 2) - 1));
+  const midX = arc.midX ?? (subX + objX) / 2;
 
   // Unselected arcs are thinner and more transparent to stay in the background
   const SW    = isAttr ? (selected ? 1.8 : 1.0) : (selected ? 2.5 : 1.2);
-  const alpha = isAttr ? (selected ? 0.9 : 0.4) : (selected ? 1.0 : 0.45);
+  const alpha = isAttr ? (selected ? 0.9 : 0.4) : (selected ? 1.0 : 0.5);
 
   const g = document.createElementNS(NS, 'g');
 
@@ -2068,24 +2071,27 @@ function _drawArc(svg, NS, arc) {
   title.textContent = label;
   g.appendChild(title);
 
-  // ── Bracket path ────────────────────────────────────────────────────────
-  const isSubLeft = subX <= objX;
-  const lx = isSubLeft ? subX : objX;
-  const rx = isSubLeft ? objX : subX;
-  const ly = isSubLeft ? subY : objY;
-  const ry = isSubLeft ? objY : subY;
+  // ── Floating-bar path ────────────────────────────────────────────────────
+  // The bar is drawn entirely in the padding-top zone.  Small downward hooks
+  // at each end act as visual anchors; they never reach entity Y positions so
+  // no lines cross through the text content.
+  const HOOK = 7;
+  const lx   = Math.min(subX, objX);
+  const rx   = Math.max(subX, objX);
+  const R    = Math.min(4, (rx - lx) / 2);   // corner radius
 
   let d;
-  if (rx - lx <= 2 * R + 2) {
-    d = `M ${lx} ${ly} Q ${midX} ${apexY} ${rx} ${ry}`;
+  if (rx - lx < 2) {
+    // Degenerate case: subject and object at the same X — draw a tiny bump
+    d = `M ${lx} ${apexY + HOOK} Q ${midX - 8} ${apexY} ${rx} ${apexY + HOOK}`;
   } else {
     d = [
-      `M ${lx} ${ly}`,
+      `M ${lx} ${apexY + HOOK}`,
       `L ${lx} ${apexY + R}`,
       `Q ${lx} ${apexY} ${lx + R} ${apexY}`,
       `L ${rx - R} ${apexY}`,
       `Q ${rx} ${apexY} ${rx} ${apexY + R}`,
-      `L ${rx} ${ry}`,
+      `L ${rx} ${apexY + HOOK}`,
     ].join(' ');
   }
 
