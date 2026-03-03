@@ -1731,6 +1731,28 @@ function renderTextDisplay() {
     if (selRel && selRt) highlightLinkedEntities(selRel.subjectId, selRel.objectId, selRt.color);
   }
 
+  // If an attribute is currently selected, highlight its parent entity/rel span
+  if (state.selectedAttrAnnId) {
+    const selAttr = state.attrAnnotations.find(a => a.id === state.selectedAttrAnnId);
+    if (selAttr && selAttr.parentId) {
+      const at = state.attrTypes.find(t => t.id === selAttr.attrTypeId);
+      const atColor = at ? at.color : '#888';
+      if (selAttr.parentType === 'entity') {
+        const parentEl = DOM.textDisplay.querySelector(`[data-ann-id="${selAttr.parentId}"]`);
+        if (parentEl) {
+          parentEl.classList.add('attr-linked-parent');
+          parentEl.style.setProperty('--attr-link-color', atColor);
+        }
+      } else if (selAttr.parentType === 'relationship') {
+        const parentEl = DOM.textDisplay.querySelector(`[data-rel-id="${selAttr.parentId}"]`);
+        if (parentEl) {
+          parentEl.classList.add('attr-linked-parent');
+          parentEl.style.setProperty('--attr-link-color', atColor);
+        }
+      }
+    }
+  }
+
   // Clicking background deselects
   DOM.textDisplay.addEventListener('click', e => {
     if (e.target === DOM.textDisplay) {
@@ -1832,10 +1854,37 @@ function renderRelationshipArcs() {
       color:    rt.color,
       label:    rt.name,
       subX:     sr.left + sr.width  / 2,
-      subY:     Math.max(sr.top,  cRect.top),   // clamp to container top
+      subY:     Math.max(sr.top,  cRect.top),
       objX:     or.left + or.width  / 2,
       objY:     Math.max(or.top,  cRect.top),
       selected: relAnn.id === state.selectedRelAnnId,
+      isAttr:   false,
+    });
+  }
+
+  // Attribute arcs — dotted lines connecting each attribute span to its parent entity
+  for (const attrAnn of state.attrAnnotations) {
+    if (attrAnn.parentType !== 'entity' || !attrAnn.parentId) continue;
+    const at     = state.attrTypes.find(t => t.id === attrAnn.attrTypeId);
+    const attrEl = DOM.textDisplay.querySelector(`[data-attr-id="${attrAnn.id}"]`);
+    const parEl  = DOM.textDisplay.querySelector(`[data-ann-id="${attrAnn.parentId}"]`);
+    if (!at || !attrEl || !parEl) continue;
+
+    const ar = attrEl.getBoundingClientRect();
+    const pr = parEl.getBoundingClientRect();
+    if (ar.bottom < cRect.top || ar.top > cRect.bottom) continue;
+    if (pr.bottom < cRect.top || pr.top > cRect.bottom) continue;
+
+    arcs.push({
+      id:       attrAnn.id,
+      color:    at.color,
+      label:    at.name,
+      subX:     ar.left + ar.width  / 2,
+      subY:     Math.max(ar.top,  cRect.top),
+      objX:     pr.left + pr.width  / 2,
+      objY:     Math.max(pr.top,  cRect.top),
+      selected: attrAnn.id === state.selectedAttrAnnId,
+      isAttr:   true,
     });
   }
 
@@ -1896,12 +1945,13 @@ function renderRelationshipArcs() {
  * Draws one bracket arc + label box + subject dot + object arrowhead into svg.
  */
 function _drawArc(svg, NS, arc) {
-  const { subX, subY, objX, objY, apexY, color, label, selected } = arc;
+  const { subX, subY, objX, objY, apexY, color, label, selected, isAttr } = arc;
   const midX  = (subX + objX) / 2;
   // Corner radius — capped so it never exceeds half the horizontal span
   const R     = Math.max(0, Math.min(7, (Math.abs(objX - subX) / 2) - 1));
-  const SW    = selected ? 2.5 : 1.5;
-  const alpha = selected ? 1   : 0.8;
+  // Attribute arcs are thinner and more transparent than relationship arcs
+  const SW    = isAttr ? (selected ? 1.8 : 1.2) : (selected ? 2.5 : 1.5);
+  const alpha = isAttr ? (selected ? 0.9 : 0.55) : (selected ? 1 : 0.8);
 
   const g = document.createElementNS(NS, 'g');
 
@@ -1934,6 +1984,7 @@ function _drawArc(svg, NS, arc) {
   path.setAttribute('stroke', color);
   path.setAttribute('stroke-width', String(SW));
   path.setAttribute('stroke-opacity', String(alpha));
+  if (isAttr) path.setAttribute('stroke-dasharray', '4 3');
   g.appendChild(path);
 
   // ── Subject — filled dot ────────────────────────────────────────────────
