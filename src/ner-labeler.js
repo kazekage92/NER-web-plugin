@@ -746,16 +746,28 @@ const _REL_PATTERNS = [
 /**
  * Find the nearest entity annotation before (subject) and after (object) a
  * relationship keyword at [relStart, relEnd].  Returns annotation IDs or null.
+ *
+ * Rule of thumb: subject must be a Company; object must be a Company or Location.
+ * entityTypes is passed so we can filter by type name.
  */
-function findLinkedEntities(relStart, relEnd, entityAnnotations, maxDist) {
+function findLinkedEntities(relStart, relEnd, entityAnnotations, maxDist, entityTypes) {
+  const subjectTypeIds = new Set(
+    (entityTypes || []).filter(t => t.name.toUpperCase() === 'COMPANY').map(t => t.id)
+  );
+  const objectTypeIds = new Set(
+    (entityTypes || []).filter(t => ['COMPANY', 'LOCATION'].includes(t.name.toUpperCase())).map(t => t.id)
+  );
+
   let subject = null, subjectDist = maxDist + 1;
   let object  = null, objectDist  = maxDist + 1;
 
   for (const ann of entityAnnotations) {
     if (ann.end <= relStart) {
+      if (subjectTypeIds.size && !subjectTypeIds.has(ann.entityTypeId)) continue;
       const d = relStart - ann.end;
       if (d < subjectDist) { subjectDist = d; subject = ann; }
     } else if (ann.start >= relEnd) {
+      if (objectTypeIds.size && !objectTypeIds.has(ann.entityTypeId)) continue;
       const d = ann.start - relEnd;
       if (d < objectDist)  { objectDist  = d; object  = ann; }
     }
@@ -770,7 +782,7 @@ function findLinkedEntities(relStart, relEnd, entityAnnotations, maxDist) {
  * @param {Array}  entityAnnotations  – already-built entity annotation array
  * @returns {Array} detections with { start, end, name, subjectId, objectId }
  */
-function autoDetectRelationships(text, entityAnnotations) {
+function autoDetectRelationships(text, entityAnnotations, entityTypes) {
   const MAX_LINK_DIST = 300;
   const res = [];
 
@@ -792,7 +804,7 @@ function autoDetectRelationships(text, entityAnnotations) {
   // Link each keyword to nearest subject/object entity
   return deduped.map(r => ({
     ...r,
-    ...findLinkedEntities(r.start, r.end, entityAnnotations, MAX_LINK_DIST),
+    ...findLinkedEntities(r.start, r.end, entityAnnotations, MAX_LINK_DIST, entityTypes),
   }));
 }
 
@@ -826,8 +838,8 @@ function handleAutoLabel() {
     entAdded++;
   });
 
-  // Relationship detection — pass entity annotations so subject/object can be linked
-  const relDetections = autoDetectRelationships(text, state.annotations);
+  // Relationship detection — subject must be Company; object must be Company or Location
+  const relDetections = autoDetectRelationships(text, state.annotations, state.entityTypes);
   let relAdded = 0;
 
   relDetections.forEach(det => {
@@ -2114,7 +2126,7 @@ function renderAnnotationsList() {
       if (isSelected) {
         const subSel = document.createElement('select');
         subSel.className = 'ann-edit-select';
-        subSel.title = 'Change subject entity';
+        subSel.title = 'Change subject entity (Company only)';
         const noneOptS = document.createElement('option');
         noneOptS.value = '';
         noneOptS.textContent = '— none —';
@@ -2122,9 +2134,10 @@ function renderAnnotationsList() {
         subSel.appendChild(noneOptS);
         state.annotations.forEach(a => {
           const aEt = state.entityTypes.find(e => e.id === a.entityTypeId);
+          if (!aEt || aEt.name.toUpperCase() !== 'COMPANY') return;
           const opt = document.createElement('option');
           opt.value = a.id;
-          opt.textContent = `${a.text} (${aEt ? aEt.name : '?'})`;
+          opt.textContent = `${a.text} (${aEt.name})`;
           if (a.id === ann.subjectId) opt.selected = true;
           subSel.appendChild(opt);
         });
@@ -2198,7 +2211,7 @@ function renderAnnotationsList() {
       if (isSelected) {
         const objSel = document.createElement('select');
         objSel.className = 'ann-edit-select';
-        objSel.title = 'Change object entity';
+        objSel.title = 'Change object entity (Company or Location)';
         const noneOptO = document.createElement('option');
         noneOptO.value = '';
         noneOptO.textContent = '— none —';
@@ -2206,9 +2219,10 @@ function renderAnnotationsList() {
         objSel.appendChild(noneOptO);
         state.annotations.forEach(a => {
           const aEt = state.entityTypes.find(e => e.id === a.entityTypeId);
+          if (!aEt || !['COMPANY', 'LOCATION'].includes(aEt.name.toUpperCase())) return;
           const opt = document.createElement('option');
           opt.value = a.id;
-          opt.textContent = `${a.text} (${aEt ? aEt.name : '?'})`;
+          opt.textContent = `${a.text} (${aEt.name})`;
           if (a.id === ann.objectId) opt.selected = true;
           objSel.appendChild(opt);
         });
