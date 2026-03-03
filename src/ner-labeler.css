@@ -672,6 +672,24 @@ kbd {
   font-style: italic;
 }
 
+/* Inline edit selects — appear when an annotation card is selected */
+.ann-edit-select {
+  font-size: .72rem;
+  font-family: inherit;
+  padding: 1px 4px;
+  border: 1px solid var(--border-focus);
+  border-radius: 4px;
+  background: var(--bg-primary);
+  color: var(--text-primary);
+  cursor: pointer;
+  max-width: 160px;
+  outline: none;
+}
+.ann-edit-select:focus {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 2px rgba(91,106,240,.25);
+}
+
 /* ===== Badge ===== */
 .badge {
   display: inline-block;

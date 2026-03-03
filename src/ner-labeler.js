@@ -1677,7 +1677,33 @@ function renderAnnotationsList() {
       // ── Subject row ──
       const subjectRow = document.createElement('div');
       subjectRow.className = 'triplet-entity triplet-subject';
-      if (subjectAnn && subjectEt) {
+      if (isSelected) {
+        const subSel = document.createElement('select');
+        subSel.className = 'ann-edit-select';
+        subSel.title = 'Change subject entity';
+        const noneOptS = document.createElement('option');
+        noneOptS.value = '';
+        noneOptS.textContent = '— none —';
+        if (!ann.subjectId) noneOptS.selected = true;
+        subSel.appendChild(noneOptS);
+        state.annotations.forEach(a => {
+          const aEt = state.entityTypes.find(e => e.id === a.entityTypeId);
+          const opt = document.createElement('option');
+          opt.value = a.id;
+          opt.textContent = `${a.text} (${aEt ? aEt.name : '?'})`;
+          if (a.id === ann.subjectId) opt.selected = true;
+          subSel.appendChild(opt);
+        });
+        subSel.addEventListener('click', e => e.stopPropagation());
+        subSel.addEventListener('change', e => {
+          e.stopPropagation();
+          pushUndo();
+          const target = state.relAnnotations.find(r => r.id === ann.id);
+          if (target) target.subjectId = e.target.value || null;
+          render();
+        });
+        subjectRow.appendChild(subSel);
+      } else if (subjectAnn && subjectEt) {
         const dot = document.createElement('span');
         dot.className = 'triplet-dot';
         dot.style.background = subjectEt.color;
@@ -1699,11 +1725,33 @@ function renderAnnotationsList() {
       const relArrow = document.createElement('span');
       relArrow.className = 'triplet-arrow';
       relArrow.textContent = '\u2193';
-      const relLbl = document.createElement('span');
-      relLbl.className = 'triplet-rel-name';
-      relLbl.textContent = (rt ? rt.name : 'UNKNOWN') + ' \u2933';
       relRow.appendChild(relArrow);
-      relRow.appendChild(relLbl);
+      if (isSelected) {
+        const relTypeSel = document.createElement('select');
+        relTypeSel.className = 'ann-edit-select';
+        relTypeSel.title = 'Change relationship type';
+        state.relationshipTypes.forEach(rt2 => {
+          const opt = document.createElement('option');
+          opt.value = rt2.id;
+          opt.textContent = rt2.name;
+          if (rt2.id === ann.relTypeId) opt.selected = true;
+          relTypeSel.appendChild(opt);
+        });
+        relTypeSel.addEventListener('click', e => e.stopPropagation());
+        relTypeSel.addEventListener('change', e => {
+          e.stopPropagation();
+          pushUndo();
+          const target = state.relAnnotations.find(r => r.id === ann.id);
+          if (target) target.relTypeId = e.target.value;
+          render();
+        });
+        relRow.appendChild(relTypeSel);
+      } else {
+        const relLbl = document.createElement('span');
+        relLbl.className = 'triplet-rel-name';
+        relLbl.textContent = (rt ? rt.name : 'UNKNOWN') + ' \u2933';
+        relRow.appendChild(relLbl);
+      }
 
       // Keyword + position
       const kwRow = document.createElement('div');
@@ -1713,7 +1761,33 @@ function renderAnnotationsList() {
       // ── Object row ──
       const objectRow = document.createElement('div');
       objectRow.className = 'triplet-entity triplet-object';
-      if (objectAnn && objectEt) {
+      if (isSelected) {
+        const objSel = document.createElement('select');
+        objSel.className = 'ann-edit-select';
+        objSel.title = 'Change object entity';
+        const noneOptO = document.createElement('option');
+        noneOptO.value = '';
+        noneOptO.textContent = '— none —';
+        if (!ann.objectId) noneOptO.selected = true;
+        objSel.appendChild(noneOptO);
+        state.annotations.forEach(a => {
+          const aEt = state.entityTypes.find(e => e.id === a.entityTypeId);
+          const opt = document.createElement('option');
+          opt.value = a.id;
+          opt.textContent = `${a.text} (${aEt ? aEt.name : '?'})`;
+          if (a.id === ann.objectId) opt.selected = true;
+          objSel.appendChild(opt);
+        });
+        objSel.addEventListener('click', e => e.stopPropagation());
+        objSel.addEventListener('change', e => {
+          e.stopPropagation();
+          pushUndo();
+          const target = state.relAnnotations.find(r => r.id === ann.id);
+          if (target) target.objectId = e.target.value || null;
+          render();
+        });
+        objectRow.appendChild(objSel);
+      } else if (objectAnn && objectEt) {
         const dot = document.createElement('span');
         dot.className = 'triplet-dot';
         dot.style.background = objectEt.color;
@@ -1780,7 +1854,32 @@ function renderAnnotationsList() {
 
       const meta = document.createElement('div');
       meta.className = 'annotation-meta';
-      meta.textContent = `${et ? et.name : 'UNKNOWN'}  \u00b7  ${ann.start}\u2013${ann.end}`;
+      if (isSelected) {
+        const typeSel = document.createElement('select');
+        typeSel.className = 'ann-edit-select';
+        typeSel.title = 'Change entity type';
+        state.entityTypes.forEach(et2 => {
+          const opt = document.createElement('option');
+          opt.value = et2.id;
+          opt.textContent = et2.name;
+          if (et2.id === ann.entityTypeId) opt.selected = true;
+          typeSel.appendChild(opt);
+        });
+        typeSel.addEventListener('click', e => e.stopPropagation());
+        typeSel.addEventListener('change', e => {
+          e.stopPropagation();
+          pushUndo();
+          const target = state.annotations.find(a => a.id === ann.id);
+          if (target) target.entityTypeId = e.target.value;
+          render();
+        });
+        meta.appendChild(typeSel);
+        const posSpan = document.createElement('span');
+        posSpan.textContent = `  \u00b7  ${ann.start}\u2013${ann.end}`;
+        meta.appendChild(posSpan);
+      } else {
+        meta.textContent = `${et ? et.name : 'UNKNOWN'}  \u00b7  ${ann.start}\u2013${ann.end}`;
+      }
 
       info.appendChild(textEl);
       info.appendChild(meta);
