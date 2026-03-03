@@ -398,6 +398,21 @@ function autoDetectNER(text) {
   const res = [];
   let m;
 
+  // ── Pre-scan: discover "Full Name (ACRONYM)" definitions ──────────────────
+  // Build a map of  acronym → { wholeStart, wholeEnd }  for the first
+  // occurrence of each "Full Name (ACRONYM)" pattern.  These acronyms are
+  // excluded from the generic capitalised-word scanner so they don't get
+  // mis-typed as ORG; they are re-introduced with the correct inherited type
+  // in the post-processing pass at the bottom of this function.
+  const acronymDefs = new Map();
+  {
+    const defRe = /\b([A-Z][A-Za-z &,\-']{2,80}?)\s+\(([A-Z][A-Z0-9]{1,10})\)/g;
+    let ad;
+    while ((ad = defRe.exec(text)) !== null)
+      if (!acronymDefs.has(ad[2]))  // first definition wins
+        acronymDefs.set(ad[2], { wholeStart: ad.index, wholeEnd: ad.index + ad[0].length });
+  }
+
   function add(re, type) {
     re.lastIndex = 0;
     while ((m = re.exec(text)) !== null)
@@ -413,10 +428,13 @@ function autoDetectNER(text) {
   detectMalaysianCompanies(text).forEach(r => res.push(r));
   add(_NER_ORG_RE, 'ORG');
 
-  // Acronyms → ORG (with expanded skip list)
+  // Acronyms → ORG (with expanded skip list).
+  // Acronyms that appear in a "Full Name (ACRONYM)" definition are excluded here
+  // and handled in the resolution pass below so they inherit the parent entity type.
   const aRe = /\b[A-Z]{2,5}\b/g;
   while ((m = aRe.exec(text)) !== null)
-    if (!_NER_ACRONYM_SKIP.has(m[0])) res.push({ start: m.index, end: m.index + m[0].length, type: 'ORG' });
+    if (!_NER_ACRONYM_SKIP.has(m[0]) && !acronymDefs.has(m[0]))
+      res.push({ start: m.index, end: m.index + m[0].length, type: 'ORG' });
 
   // Known first names → PERSON
   const pRe = /\b([A-Z][a-z]{1,15})(?:\s+[A-Z][a-z]{1,15}){1,3}\b/g;
@@ -448,6 +466,44 @@ function autoDetectNER(text) {
   res.sort((a, b) => a.start - b.start || (b.end - b.start) - (a.end - a.start));
   const out = []; let last = -1;
   for (const r of res) { if (r.start >= last) { out.push(r); last = r.end; } }
+
+  // ── Acronym-definition resolution pass ────────────────────────────────────
+  // For each "Full Name (ACRONYM)" pattern found above:
+  //   1. Locate the annotation that covers the full-name portion of the span.
+  //   2. Extend that annotation to also include the "(ACRONYM)" suffix, so the
+  //      bracketed definition is part of the same entity rather than a gap.
+  //   3. Tag every subsequent standalone occurrence of ACRONYM with the same
+  //      entity type as the full name (not the default ORG type).
+  if (acronymDefs.size) {
+    for (const [acronym, { wholeStart, wholeEnd }] of acronymDefs) {
+      // Find the annotation whose span sits within the definition but before
+      // the opening parenthesis (i.e. it covers the full-name text only).
+      const parent = out.find(r => r.start >= wholeStart && r.end < wholeEnd);
+      if (!parent) continue;  // full name wasn't detected by any rule — skip
+
+      // Stretch the annotation to cover the whole "Full Name (ACRONYM)" span
+      parent.end = wholeEnd;
+
+      // Add all standalone occurrences of the acronym outside the definition
+      const escaped = acronym.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+      const acRe = new RegExp(`\\b${escaped}\\b`, 'g');
+      let acm;
+      while ((acm = acRe.exec(text)) !== null) {
+        if (acm.index >= wholeStart && acm.index < wholeEnd) continue; // skip definition occurrence
+        const s = acm.index, e = acm.index + acronym.length;
+        if (!out.some(r => s < r.end && e > r.start))  // not overlapping anything
+          out.push({ start: s, end: e, type: parent.type });
+      }
+    }
+    // Re-sort and de-overlap after insertions
+    out.sort((a, b) => a.start - b.start || (b.end - b.start) - (a.end - a.start));
+    let i = 0;
+    while (i < out.length - 1) {
+      if (out[i + 1].start < out[i].end) out.splice(i + 1, 1);
+      else i++;
+    }
+  }
+
   return out;
 }
 
