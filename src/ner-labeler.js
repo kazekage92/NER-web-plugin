@@ -1644,9 +1644,14 @@ function renderTextDisplay() {
       const color = rt ? rt.color : '#888';
       const isSelected = item.id === state.selectedRelAnnId;
       const selectedClass = isSelected ? ' selected' : '';
-      html += `<span class="ner-rel-span${selectedClass}" data-rel-id="${item.id}" style="border-bottom:2px dashed ${color}; color:${color};" title="${escapeAttr(rt ? rt.name : 'UNKNOWN')}">`;
+      // Relationship keywords are already shown as arcs above the text.
+      // Render inline as plain text with only a subtle underline so the text
+      // stays readable. A dashed underline + faint background appear on select.
+      const inlineStyle = isSelected
+        ? `border-bottom:2px dashed ${color}; background:${hexToRgba(color, 0.1)};`
+        : `border-bottom:1px dotted ${hexToRgba(color, 0.45)};`;
+      html += `<span class="ner-rel-span${selectedClass}" data-rel-id="${item.id}" style="${inlineStyle}" title="${escapeAttr(rt ? rt.name : 'UNKNOWN')}">`;
       html += escapeHtml(text.slice(item.start, item.end));
-      html += `<span class="ner-label-tag" style="background:${color}; color:${contrastColor(color)};">\u2194${escapeHtml(rt ? rt.name : '?')}</span>`;
       html += '</span>';
     } else {
       const et = state.entityTypes.find(e => e.id === item.entityTypeId);
