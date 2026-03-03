@@ -534,6 +534,13 @@ kbd {
   outline-offset: 1px;
 }
 
+/* Parent entity/rel span highlighted when one of its attributes is selected */
+.ner-span.attr-linked-parent,
+.ner-rel-span.attr-linked-parent {
+  outline: 2px dashed var(--attr-link-color, #888);
+  outline-offset: 2px;
+}
+
 /* Attribute label tag — slightly smaller/lighter than entity tags */
 .ner-attr-tag {
   font-size: .54rem;
