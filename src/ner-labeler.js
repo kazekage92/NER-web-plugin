@@ -1835,8 +1835,9 @@ function getOrCreateArcSvg() {
       'overflow:visible',
     ].join(';'));
     document.body.appendChild(svg);
-    // Redraw whenever the text scrolls or the window resizes
-    DOM.textDisplay.addEventListener('scroll', () => requestAnimationFrame(renderRelationshipArcs));
+    // On scroll: just redraw arcs at new positions — never adjust padding,
+    // because changing paddingTop itself fires a scroll event which would loop.
+    DOM.textDisplay.addEventListener('scroll', () => requestAnimationFrame(() => renderRelationshipArcs(false)));
     window.addEventListener('resize',          () => requestAnimationFrame(renderRelationshipArcs));
   }
   return svg;
@@ -1849,7 +1850,13 @@ function getOrCreateArcSvg() {
  * partial scrolls.  Called via requestAnimationFrame after every render() so
  * layout is fully committed before we measure.
  */
-function renderRelationshipArcs() {
+/**
+ * @param {boolean} adjustPadding  When true (default), sets paddingTop on the
+ *   text container once to reserve space for arcs, then schedules a second
+ *   pass with adjustPadding=false to draw at the new positions.
+ *   Scroll events call with false to avoid the paddingTop→scroll→loop.
+ */
+function renderRelationshipArcs(adjustPadding = true) {
   const NS  = 'http://www.w3.org/2000/svg';
   const svg = getOrCreateArcSvg();
 
@@ -1857,7 +1864,7 @@ function renderRelationshipArcs() {
   [...svg.childNodes].forEach(n => n.remove());
 
   if (state.mode !== 'labeling' || !state.relAnnotations.length) {
-    DOM.textDisplay.style.paddingTop = '';  // restore CSS default
+    if (adjustPadding) DOM.textDisplay.style.paddingTop = '';  // restore CSS default
     return;
   }
 
@@ -1948,10 +1955,11 @@ function renderRelationshipArcs() {
     : BASE_PAD;
   const currentPad = parseFloat(DOM.textDisplay.style.paddingTop || BASE_PAD);
 
-  if (Math.abs(currentPad - neededPad) > 2) {
-    // Padding changed — update and schedule a re-measure so positions are fresh
+  if (adjustPadding && Math.abs(currentPad - neededPad) > 2) {
+    // Padding changed — update once, then schedule one final draw without
+    // further adjustment so we never loop (paddingTop change fires scroll).
     DOM.textDisplay.style.paddingTop = neededPad + 'px';
-    requestAnimationFrame(renderRelationshipArcs);
+    requestAnimationFrame(() => renderRelationshipArcs(false));
     return;
   }
 
