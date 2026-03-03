@@ -17,6 +17,15 @@ const DEFAULT_ENTITY_TYPES = [
   { name: 'Item',     color: '#e0c454' },
 ];
 
+const DEFAULT_ATTR_TYPES = [
+  { name: 'Date',        color: '#e67e22' },
+  { name: 'Value',       color: '#27ae60' },
+  { name: 'Location',    color: '#16a085' },
+  { name: 'Nationality', color: '#8e44ad' },
+  { name: 'Percentage',  color: '#e74c3c' },
+  { name: 'Duration',    color: '#2980b9' },
+];
+
 const DEFAULT_REL_TYPES = [
   { name: 'Operates',            color: '#f39c12' },
   { name: 'Owes / In Debt',      color: '#e74c3c' },
@@ -42,10 +51,15 @@ let state = {
   annotations: [],
   relationshipTypes: [],
   relAnnotations: [],
+  attrTypes: [],
+  // {id, start, end, text, attrTypeId, parentId, parentType:'entity'|'relationship'}
+  attrAnnotations: [],
   activeEntityTypeId: null,
   activeRelTypeId: null,
+  activeAttrTypeId: null,
   selectedAnnotationId: null,
   selectedRelAnnId: null,
+  selectedAttrAnnId: null,
   undoStack: [],
   mode: 'input',
 };
@@ -68,6 +82,10 @@ const DOM = {
   newRelName:         $('new-rel-name'),
   newRelColor:        $('new-rel-color'),
   btnAddRel:          $('btn-add-rel'),
+  attrTypesList:      $('attr-types-list'),
+  newAttrName:        $('new-attr-name'),
+  newAttrColor:       $('new-attr-color'),
+  btnAddAttr:         $('btn-add-attr'),
   rawTextInput:       $('raw-text-input'),
   charCount:          $('char-count'),
   btnAutoLabel:       $('btn-auto-label'),
@@ -105,6 +123,9 @@ function init() {
   DEFAULT_REL_TYPES.forEach(rt => {
     state.relationshipTypes.push({ id: uid(), name: rt.name, color: rt.color });
   });
+  DEFAULT_ATTR_TYPES.forEach(at => {
+    state.attrTypes.push({ id: uid(), name: at.name, color: at.color });
+  });
 
   loadFromStorage();
   bindEvents();
@@ -124,6 +145,11 @@ function bindEvents() {
   DOM.btnAddRel.addEventListener('click', handleAddRelType);
   DOM.newRelName.addEventListener('keydown', e => {
     if (e.key === 'Enter') handleAddRelType();
+  });
+
+  DOM.btnAddAttr.addEventListener('click', handleAddAttrType);
+  DOM.newAttrName.addEventListener('keydown', e => {
+    if (e.key === 'Enter') handleAddAttrType();
   });
 
   DOM.rawTextInput.addEventListener('input', () => {
@@ -160,6 +186,7 @@ function bindEvents() {
       pushUndo();
       state.annotations = [];
       state.relAnnotations = [];
+      state.attrAnnotations = [];
       render();
     });
   });
@@ -204,6 +231,20 @@ function handleAddRelType() {
   state.relationshipTypes.push({ id: uid(), name, color: DOM.newRelColor.value });
   DOM.newRelName.value = '';
   DOM.newRelColor.value = randomColor();
+  saveToStorage();
+  render();
+}
+
+function handleAddAttrType() {
+  const name = DOM.newAttrName.value.trim().toUpperCase();
+  if (!name) return;
+  if (state.attrTypes.find(at => at.name === name)) {
+    flashInput(DOM.newAttrName, 'Attribute type already exists');
+    return;
+  }
+  state.attrTypes.push({ id: uid(), name, color: DOM.newAttrColor.value });
+  DOM.newAttrName.value = '';
+  DOM.newAttrColor.value = randomColor();
   saveToStorage();
   render();
 }
@@ -768,6 +809,7 @@ function handleAutoLabel() {
   state.mode = 'labeling';
   state.annotations = [];
   state.relAnnotations = [];
+  state.attrAnnotations = [];
 
   // Entity detection
   const detections = autoDetectNER(text);
@@ -804,9 +846,98 @@ function handleAutoLabel() {
     relAdded++;
   });
 
+  // Attribute detection — dates, values, percentages, durations, nationalities
+  const attrDetections = autoDetectAttributes(text, state.annotations, state.relAnnotations);
+  let attrAdded = 0;
+
+  attrDetections.forEach(det => {
+    const at = state.attrTypes.find(t => t.name.toUpperCase() === det.attrTypeName.toUpperCase());
+    if (!at || !det.parentId) return;
+    // Skip if overlaps another attribute
+    const overlapsAttr = state.attrAnnotations.some(a => !(det.end <= a.start || det.start >= a.end));
+    if (overlapsAttr) return;
+    state.attrAnnotations.push({
+      id: uid(), start: det.start, end: det.end, text: det.text,
+      attrTypeId: at.id, parentId: det.parentId, parentType: det.parentType,
+    });
+    attrAdded++;
+  });
+
   render();
   saveToStorage();
-  DOM.docStatus.textContent = `Auto-detected ${entAdded} entit${entAdded !== 1 ? 'ies' : 'y'}, ${relAdded} relationship${relAdded !== 1 ? 's' : ''}`;
+  DOM.docStatus.textContent = `Auto-detected ${entAdded} entit${entAdded !== 1 ? 'ies' : 'y'}, ${relAdded} relationship${relAdded !== 1 ? 's' : ''}, ${attrAdded} attribute${attrAdded !== 1 ? 's' : ''}`;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Attribute Auto-Detection
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Detect common attribute values (dates, monetary values, percentages, durations,
+ * nationalities) and link each to its nearest entity or relationship annotation.
+ *
+ * @param {string} text
+ * @param {Array}  entityAnnotations
+ * @param {Array}  relAnnotations
+ * @returns {Array<{start,end,text,attrTypeName,parentId,parentType}>}
+ */
+function autoDetectAttributes(text, entityAnnotations, relAnnotations) {
+  const results = [];
+
+  // All potential parents with their midpoint for proximity scoring
+  const allParents = [
+    ...entityAnnotations.map(a => ({ id: a.id, parentType: 'entity', mid: (a.start + a.end) / 2 })),
+    ...relAnnotations.map(a =>    ({ id: a.id, parentType: 'relationship', mid: (a.start + a.end) / 2 })),
+  ];
+
+  // Find the nearest parent annotation within MAX_DIST characters
+  const MAX_DIST = 250;
+  function nearestParent(start, end) {
+    const mid = (start + end) / 2;
+    let best = null, bestDist = Infinity;
+    for (const p of allParents) {
+      const dist = Math.abs(p.mid - mid);
+      if (dist < bestDist) { bestDist = dist; best = p; }
+    }
+    return bestDist <= MAX_DIST ? best : null;
+  }
+
+  // Already-occupied ranges from entity/rel annotations
+  const occupied = [
+    ...entityAnnotations.map(a => ({ start: a.start, end: a.end })),
+    ...relAnnotations.map(a =>    ({ start: a.start, end: a.end })),
+  ];
+  function overlapsOccupied(s, e) {
+    return occupied.some(r => !(e <= r.start || s >= r.end));
+  }
+
+  function addMatches(re, attrTypeName) {
+    let m;
+    re.lastIndex = 0;
+    while ((m = re.exec(text)) !== null) {
+      const start = m.index, end = m.index + m[0].length;
+      if (overlapsOccupied(start, end)) continue; // skip if inside an entity/rel span
+      const parent = nearestParent(start, end);
+      results.push({ start, end, text: m[0], attrTypeName, parentId: parent ? parent.id : null, parentType: parent ? parent.parentType : null });
+    }
+  }
+
+  // DATE — full dates, quarters, half-years, standalone years (4 digits, 1900-2099)
+  addMatches(/\b(?:Jan(?:uary)?|Feb(?:ruary)?|Mar(?:ch)?|Apr(?:il)?|May|Jun(?:e)?|Jul(?:y)?|Aug(?:ust)?|Sep(?:tember)?|Oct(?:ober)?|Nov(?:ember)?|Dec(?:ember))\s+\d{1,2}(?:st|nd|rd|th)?,?\s*(?:19|20)\d{2}\b|\b\d{1,2}[\/\-]\d{1,2}[\/\-](?:\d{4}|\d{2})\b|\b(?:19|20)\d{2}[\/\-]\d{1,2}[\/\-]\d{1,2}\b|\bQ[1-4]\s+(?:19|20)\d{2}\b|\bH[12]\s+(?:19|20)\d{2}\b|\b(?:19|20)\d{2}\b/gi, 'Date');
+
+  // VALUE — RM, USD, $ amounts with optional magnitude words
+  addMatches(/\bRM\s*[\d,]+(?:\.\d+)?(?:\s*(?:million|billion|trillion|mil|bil|[MBmbt]))?\b|\$\s*[\d,]+(?:\.\d{1,2})?(?:\s*(?:million|billion|trillion|[MBT]))?\b|\b[\d,]+(?:\.\d{1,2})?\s*(?:million|billion|trillion)?\s*(?:USD|EUR|GBP|MYR|ringgit|dollars?|euros?)\b/gi, 'Value');
+
+  // PERCENTAGE
+  addMatches(/\b\d+(?:\.\d+)?\s*%|\b\d+(?:\.\d+)?\s*percent\b/gi, 'Percentage');
+
+  // DURATION — numeric + time unit
+  addMatches(/\b\d+(?:\.\d+)?\s*(?:year|month|week|day|hour)s?\b/gi, 'Duration');
+
+  // NATIONALITY — common demonyms
+  addMatches(/\b(?:Malaysian|Singaporean|Indonesian|Thai|Filipino|Vietnamese|Myanmar|Cambodian|Bruneian|American|British|Chinese|Japanese|Korean|Indian|Australian|European|Arab|Saudi|Emirati|French|German|Italian|Spanish|Canadian|Brazilian|Russian|Turkish|Egyptian)\b/g, 'Nationality');
+
+  return results;
 }
 
 function handleStartLabeling() {
@@ -834,10 +965,11 @@ function handleTextSelection() {
   if (state.mode !== 'labeling') return;
 
   const entityMode = !!state.activeEntityTypeId;
-  const relMode = !entityMode && !!state.activeRelTypeId;
+  const relMode    = !entityMode && !!state.activeRelTypeId;
+  const attrMode   = !entityMode && !relMode && !!state.activeAttrTypeId;
 
-  if (!entityMode && !relMode) {
-    showTooltipMsg('Select an entity type or relationship type first');
+  if (!entityMode && !relMode && !attrMode) {
+    showTooltipMsg('Select an entity, relationship, or attribute type first');
     return;
   }
 
@@ -860,7 +992,35 @@ function handleTextSelection() {
   const selectedText = state.text.slice(start, end);
   if (!selectedText.trim()) { sel.removeAllRanges(); return; }
 
-  // Check overlaps with all annotations
+  if (attrMode) {
+    // Attributes require a selected entity or relationship as their parent
+    const parentId   = state.selectedAnnotationId || state.selectedRelAnnId;
+    const parentType = state.selectedAnnotationId  ? 'entity' : (state.selectedRelAnnId ? 'relationship' : null);
+    if (!parentId) {
+      showTooltipMsg('Select an entity or relationship card first, then highlight attribute text');
+      sel.removeAllRanges();
+      return;
+    }
+    // Attributes must not overlap with other attribute spans (can overlap entity/rel spans)
+    const attrOverlap = state.attrAnnotations.some(a => !(end <= a.start || start >= a.end));
+    if (attrOverlap) {
+      showTooltipMsg('Cannot overlap existing attribute annotations');
+      sel.removeAllRanges();
+      return;
+    }
+    pushUndo();
+    state.attrAnnotations.push({
+      id: uid(), start, end, text: selectedText,
+      attrTypeId: state.activeAttrTypeId,
+      parentId, parentType,
+    });
+    sel.removeAllRanges();
+    saveToStorage();
+    render();
+    return;
+  }
+
+  // Check overlaps with entity/rel annotations
   const allAnns = [
     ...state.annotations.map(a => ({ start: a.start, end: a.end })),
     ...state.relAnnotations.map(a => ({ start: a.start, end: a.end })),
@@ -901,18 +1061,20 @@ function handleKeydown(e) {
   }
 
   if ((e.key === 'Delete' || e.key === 'Backspace') &&
-      (state.selectedAnnotationId || state.selectedRelAnnId)) {
+      (state.selectedAnnotationId || state.selectedRelAnnId || state.selectedAttrAnnId)) {
     if (document.activeElement.tagName === 'INPUT' ||
         document.activeElement.tagName === 'TEXTAREA') return;
     e.preventDefault();
-    if (state.selectedAnnotationId) deleteAnnotation(state.selectedAnnotationId);
-    else if (state.selectedRelAnnId) deleteRelAnnotation(state.selectedRelAnnId);
+    if (state.selectedAttrAnnId)    deleteAttrAnnotation(state.selectedAttrAnnId);
+    else if (state.selectedAnnotationId) deleteAnnotation(state.selectedAnnotationId);
+    else if (state.selectedRelAnnId)     deleteRelAnnotation(state.selectedRelAnnId);
     return;
   }
 
   if (e.key === 'Escape') {
     state.selectedAnnotationId = null;
     state.selectedRelAnnId = null;
+    state.selectedAttrAnnId = null;
     render();
   }
 }
@@ -929,6 +1091,19 @@ function handleExport() {
     relationships: state.relAnnotations.map(ra => {
       const rt = state.relationshipTypes.find(r => r.id === ra.relTypeId);
       return { text: ra.text, start: ra.start, end: ra.end, label: rt ? rt.name : 'UNKNOWN' };
+    }),
+    attrTypes: state.attrTypes.map(at => ({ name: at.name, color: at.color })),
+    attributes: state.attrAnnotations.map(a => {
+      const at = state.attrTypes.find(t => t.id === a.attrTypeId);
+      const parent = a.parentType === 'entity'
+        ? state.annotations.find(e => e.id === a.parentId)
+        : state.relAnnotations.find(r => r.id === a.parentId);
+      return {
+        text: a.text, start: a.start, end: a.end,
+        label: at ? at.name : 'UNKNOWN',
+        parentType: a.parentType,
+        parentText: parent ? parent.text : null,
+      };
     }),
   };
   downloadJSON(output, 'ner-annotations.json');
@@ -1059,6 +1234,45 @@ function handleExportXlsx() {
   ];
   XLSX.utils.book_append_sheet(wb, wsEnt, 'Entities');
 
+  // ── Sheet 3: Attributes ────────────────────────────────────────────────────
+  // Columns: # | Attribute Text | Attribute Type | Parent Type | Parent Text |
+  //          Start | End | Context (±60 chars)
+  const attrHeader = [
+    '#', 'Attribute Text', 'Attribute Type',
+    'Parent Type', 'Parent Text',
+    'Start', 'End', 'Context (±60 chars)',
+  ];
+
+  const attrRows = state.attrAnnotations.map((a, i) => {
+    const at     = state.attrTypes.find(t => t.id === a.attrTypeId);
+    const parent = a.parentType === 'entity'
+      ? state.annotations.find(e => e.id === a.parentId)
+      : state.relAnnotations.find(r => r.id === a.parentId);
+    return [
+      i + 1,
+      a.text,
+      at ? at.name : '',
+      a.parentType || '',
+      parent ? parent.text : '',
+      a.start,
+      a.end,
+      ctx(a.start, a.end),
+    ];
+  });
+
+  const wsAttr = XLSX.utils.aoa_to_sheet([attrHeader, ...attrRows]);
+  wsAttr['!cols'] = [
+    { wch: 5  }, // #
+    { wch: 30 }, // Attribute Text
+    { wch: 14 }, // Attribute Type
+    { wch: 14 }, // Parent Type
+    { wch: 30 }, // Parent Text
+    { wch: 8  }, // Start
+    { wch: 8  }, // End
+    { wch: 70 }, // Context
+  ];
+  XLSX.utils.book_append_sheet(wb, wsAttr, 'Attributes');
+
   XLSX.writeFile(wb, 'ner-annotations.xlsx');
 }
 
@@ -1110,6 +1324,18 @@ function importData(data) {
     }
   });
 
+  // Merge attribute types
+  const attrMap = {};
+  state.attrTypes.forEach(at => { attrMap[at.name] = at; });
+
+  (data.attrTypes || []).forEach(at => {
+    if (!attrMap[at.name]) {
+      const newAt = { id: uid(), name: at.name, color: at.color || randomColor() };
+      state.attrTypes.push(newAt);
+      attrMap[at.name] = newAt;
+    }
+  });
+
   state.text = data.text;
   state.annotations = (data.annotations || []).map(a => {
     const et = typeMap[a.label];
@@ -1131,6 +1357,25 @@ function importData(data) {
     };
   }).filter(r => r.relTypeId);
 
+  // Re-link attributes by matching parent text (best-effort)
+  state.attrAnnotations = (data.attributes || []).map(a => {
+    const at = attrMap[a.label];
+    if (!at) return null;
+    let parentId = null, parentType = null;
+    if (a.parentType === 'entity' && a.parentText) {
+      const match = state.annotations.find(e => e.text === a.parentText);
+      if (match) { parentId = match.id; parentType = 'entity'; }
+    } else if (a.parentType === 'relationship' && a.parentText) {
+      const match = state.relAnnotations.find(r => r.text === a.parentText);
+      if (match) { parentId = match.id; parentType = 'relationship'; }
+    }
+    return {
+      id: uid(), start: a.start, end: a.end,
+      text: a.text || data.text.slice(a.start, a.end),
+      attrTypeId: at.id, parentId, parentType,
+    };
+  }).filter(Boolean);
+
   state.mode = state.text ? 'labeling' : 'input';
   DOM.rawTextInput.value = state.text;
   saveToStorage();
@@ -1144,6 +1389,7 @@ function importData(data) {
 function render() {
   renderEntityTypes();
   renderRelTypes();
+  renderAttrTypes();
   renderModeSwitch();
   if (state.mode === 'labeling') {
     renderTextDisplay();
@@ -1253,6 +1499,56 @@ function renderRelTypes() {
   });
 }
 
+function renderAttrTypes() {
+  DOM.attrTypesList.innerHTML = '';
+  state.attrTypes.forEach(at => {
+    const item = document.createElement('div');
+    item.className = 'entity-type-item' + (at.id === state.activeAttrTypeId ? ' active' : '');
+    item.dataset.id = at.id;
+
+    const swatch = document.createElement('span');
+    swatch.className = 'attr-swatch';
+    swatch.style.color = at.color;
+    swatch.textContent = '\u25c6'; // ◆ diamond
+
+    const name = document.createElement('span');
+    name.className = 'entity-name';
+    name.textContent = at.name;
+
+    const count = state.attrAnnotations.filter(a => a.attrTypeId === at.id).length;
+    const countBadge = document.createElement('span');
+    countBadge.className = 'entity-count-badge';
+    countBadge.textContent = count;
+
+    const delBtn = document.createElement('button');
+    delBtn.className = 'entity-delete-btn';
+    delBtn.title = 'Remove attribute type';
+    delBtn.textContent = '\u00d7';
+    delBtn.addEventListener('click', e => {
+      e.stopPropagation();
+      deleteAttrType(at.id);
+    });
+
+    item.appendChild(swatch);
+    item.appendChild(name);
+    item.appendChild(countBadge);
+    item.appendChild(delBtn);
+
+    item.addEventListener('click', () => {
+      if (state.activeAttrTypeId === at.id) {
+        state.activeAttrTypeId = null;
+      } else {
+        state.activeAttrTypeId = at.id;
+        state.activeEntityTypeId = null; // mutual exclusion
+        state.activeRelTypeId    = null;
+      }
+      render();
+    });
+
+    DOM.attrTypesList.appendChild(item);
+  });
+}
+
 function renderModeSwitch() {
   if (state.mode === 'input') {
     DOM.textInputMode.classList.remove('hidden');
@@ -1266,6 +1562,7 @@ function renderModeSwitch() {
 function renderActiveEntityBadge() {
   const et = state.entityTypes.find(e => e.id === state.activeEntityTypeId);
   const rt = !et && state.relationshipTypes.find(r => r.id === state.activeRelTypeId);
+  const at = !et && !rt && state.attrTypes.find(a => a.id === state.activeAttrTypeId);
 
   if (et) {
     DOM.activeEntityLabel.textContent = 'Active Entity:';
@@ -1279,6 +1576,19 @@ function renderActiveEntityBadge() {
     DOM.activeEntityBadge.style.background = hexToRgba(rt.color, 0.2);
     DOM.activeEntityBadge.style.color = rt.color;
     DOM.activeEntityBadge.style.borderColor = rt.color;
+  } else if (at) {
+    // Show which parent (entity or relationship) the attribute will attach to
+    const parentAnn = state.selectedAnnotationId
+      ? state.annotations.find(a => a.id === state.selectedAnnotationId)
+      : state.selectedRelAnnId
+        ? state.relAnnotations.find(r => r.id === state.selectedRelAnnId)
+        : null;
+    const parentLabel = parentAnn ? ` → "${parentAnn.text}"` : ' (select a parent first)';
+    DOM.activeEntityLabel.textContent = 'Active Attribute:';
+    DOM.activeEntityBadge.textContent = at.name + parentLabel;
+    DOM.activeEntityBadge.style.background = hexToRgba(at.color, 0.2);
+    DOM.activeEntityBadge.style.color = at.color;
+    DOM.activeEntityBadge.style.borderColor = at.color;
   } else {
     DOM.activeEntityLabel.textContent = 'Active:';
     DOM.activeEntityBadge.textContent = 'None selected';
@@ -1291,10 +1601,20 @@ function renderActiveEntityBadge() {
 function renderTextDisplay() {
   const text = state.text;
 
-  // Merge entity and relationship annotations
+  // Merge entity, relationship and attribute annotations.
+  // Attributes that overlap entity/rel spans are skipped from inline rendering
+  // (they still appear in the annotations panel).
+  const occupiedRanges = [
+    ...state.annotations.map(a => ({ start: a.start, end: a.end })),
+    ...state.relAnnotations.map(a => ({ start: a.start, end: a.end })),
+  ];
+  const visibleAttrs = state.attrAnnotations.filter(a =>
+    !occupiedRanges.some(r => !(a.end <= r.start || a.start >= r.end))
+  );
   const allItems = [
-    ...state.annotations.map(a => ({ ...a, isRel: false })),
-    ...state.relAnnotations.map(a => ({ ...a, isRel: true })),
+    ...state.annotations.map(a => ({ ...a, isRel: false, isAttr: false })),
+    ...state.relAnnotations.map(a => ({ ...a, isRel: true, isAttr: false })),
+    ...visibleAttrs.map(a => ({ ...a, isRel: false, isAttr: true })),
   ].sort((a, b) => a.start - b.start || a.end - b.end);
 
   let html = '';
@@ -1307,7 +1627,16 @@ function renderTextDisplay() {
       html += escapeHtml(text.slice(cursor, item.start));
     }
 
-    if (item.isRel) {
+    if (item.isAttr) {
+      const at = state.attrTypes.find(a => a.id === item.attrTypeId);
+      const color = at ? at.color : '#888';
+      const isSelected = item.id === state.selectedAttrAnnId;
+      const selectedClass = isSelected ? ' selected' : '';
+      html += `<span class="ner-attr-span${selectedClass}" data-attr-id="${item.id}" style="border-bottom:2px dotted ${color}; color:${color};" title="${escapeAttr('\u25c6 ' + (at ? at.name : 'ATTR'))}">`;
+      html += escapeHtml(text.slice(item.start, item.end));
+      html += `<span class="ner-label-tag ner-attr-tag" style="background:${color}; color:${contrastColor(color)};">\u25c6${escapeHtml(at ? at.name : '?')}</span>`;
+      html += '</span>';
+    } else if (item.isRel) {
       const rt = state.relationshipTypes.find(r => r.id === item.relTypeId);
       const color = rt ? rt.color : '#888';
       const isSelected = item.id === state.selectedRelAnnId;
@@ -1337,6 +1666,29 @@ function renderTextDisplay() {
 
   DOM.textDisplay.innerHTML = html;
 
+  // Attach events to attribute spans
+  DOM.textDisplay.querySelectorAll('.ner-attr-span').forEach(span => {
+    const attrId = span.dataset.attrId;
+    span.addEventListener('click', e => {
+      e.stopPropagation();
+      state.selectedAttrAnnId     = (state.selectedAttrAnnId === attrId) ? null : attrId;
+      state.selectedAnnotationId  = null;
+      state.selectedRelAnnId      = null;
+      render();
+    });
+    span.addEventListener('mouseenter', e => {
+      const ann = state.attrAnnotations.find(a => a.id === attrId);
+      const at  = ann && state.attrTypes.find(t => t.id === ann.attrTypeId);
+      if (!at) return;
+      const parent = ann.parentType === 'entity'
+        ? state.annotations.find(a => a.id === ann.parentId)
+        : state.relAnnotations.find(a => a.id === ann.parentId);
+      const parentLabel = parent ? ` of "${parent.text}"` : '';
+      showTooltip(e, `\u25c6 ${at.name}${parentLabel}  [${ann.start}\u2013${ann.end}]`);
+    });
+    span.addEventListener('mouseleave', hideTooltip);
+  });
+
   // Attach events to entity spans
   DOM.textDisplay.querySelectorAll('.ner-span').forEach(span => {
     const annId = span.dataset.annId;
@@ -1344,6 +1696,7 @@ function renderTextDisplay() {
       e.stopPropagation();
       state.selectedAnnotationId = (state.selectedAnnotationId === annId) ? null : annId;
       state.selectedRelAnnId = null;
+      state.selectedAttrAnnId = null;
       render();
     });
     span.addEventListener('mouseenter', e => {
@@ -1362,6 +1715,7 @@ function renderTextDisplay() {
       e.stopPropagation();
       state.selectedRelAnnId = (state.selectedRelAnnId === relId) ? null : relId;
       state.selectedAnnotationId = null;
+      state.selectedAttrAnnId = null;
       render();
     });
     span.addEventListener('mouseenter', e => {
@@ -1391,6 +1745,7 @@ function renderTextDisplay() {
     if (e.target === DOM.textDisplay) {
       state.selectedAnnotationId = null;
       state.selectedRelAnnId = null;
+      state.selectedAttrAnnId = null;
       clearLinkedHighlights();
       renderTextDisplay();
     }
@@ -1823,6 +2178,7 @@ function renderAnnotationsList() {
       item.addEventListener('click', () => {
         state.selectedRelAnnId = (state.selectedRelAnnId === ann.id) ? null : ann.id;
         state.selectedAnnotationId = null;
+        state.selectedAttrAnnId = null;
         render();
         if (state.mode === 'labeling') {
           const span = DOM.textDisplay.querySelector(`[data-rel-id="${ann.id}"]`);
@@ -1831,6 +2187,8 @@ function renderAnnotationsList() {
       });
 
       DOM.annotationsList.appendChild(item);
+      // Render any attributes attached to this relationship
+      appendAttrSubItems(ann.id, 'relationship');
     } else {
       const et    = state.entityTypes.find(e => e.id === ann.entityTypeId);
       const color = et ? et.color : '#888';
@@ -1900,6 +2258,7 @@ function renderAnnotationsList() {
       item.addEventListener('click', () => {
         state.selectedAnnotationId = (state.selectedAnnotationId === ann.id) ? null : ann.id;
         state.selectedRelAnnId = null;
+        state.selectedAttrAnnId = null;
         render();
         if (state.mode === 'labeling') {
           const span = DOM.textDisplay.querySelector(`[data-ann-id="${ann.id}"]`);
@@ -1908,7 +2267,120 @@ function renderAnnotationsList() {
       });
 
       DOM.annotationsList.appendChild(item);
+
+      // Render any attributes attached to this entity
+      appendAttrSubItems(ann.id, 'entity');
     }
+  });
+}
+
+/** Render attribute sub-items nested under a parent annotation card. */
+function appendAttrSubItems(parentId, parentType) {
+  const attrs = state.attrAnnotations.filter(a => a.parentId === parentId && a.parentType === parentType);
+  attrs.forEach(attr => {
+    const at = state.attrTypes.find(t => t.id === attr.attrTypeId);
+    const color = at ? at.color : '#888';
+    const isSelected = attr.id === state.selectedAttrAnnId;
+
+    const sub = document.createElement('div');
+    sub.className = 'attr-sub-item' + (isSelected ? ' selected' : '');
+    sub.dataset.attrId = attr.id;
+
+    const diamond = document.createElement('span');
+    diamond.className = 'attr-sub-diamond';
+    diamond.style.color = color;
+    diamond.textContent = '\u25c6';
+
+    const label = document.createElement('span');
+    label.className = 'attr-sub-label';
+
+    if (isSelected) {
+      // Inline type select
+      const typeSel = document.createElement('select');
+      typeSel.className = 'ann-edit-select';
+      typeSel.title = 'Change attribute type';
+      state.attrTypes.forEach(at2 => {
+        const opt = document.createElement('option');
+        opt.value = at2.id;
+        opt.textContent = at2.name;
+        if (at2.id === attr.attrTypeId) opt.selected = true;
+        typeSel.appendChild(opt);
+      });
+      typeSel.addEventListener('click', e => e.stopPropagation());
+      typeSel.addEventListener('change', e => {
+        e.stopPropagation();
+        pushUndo();
+        const target = state.attrAnnotations.find(a => a.id === attr.id);
+        if (target) target.attrTypeId = e.target.value;
+        render();
+      });
+
+      // Inline parent select
+      const parentSel = document.createElement('select');
+      parentSel.className = 'ann-edit-select';
+      parentSel.title = 'Change parent entity or relationship';
+      state.annotations.forEach(a => {
+        const aEt = state.entityTypes.find(e => e.id === a.entityTypeId);
+        const opt = document.createElement('option');
+        opt.value = `entity:${a.id}`;
+        opt.textContent = `${a.text} (${aEt ? aEt.name : '?'})`;
+        if (attr.parentType === 'entity' && attr.parentId === a.id) opt.selected = true;
+        parentSel.appendChild(opt);
+      });
+      state.relAnnotations.forEach(r => {
+        const rRt = state.relationshipTypes.find(t => t.id === r.relTypeId);
+        const opt = document.createElement('option');
+        opt.value = `relationship:${r.id}`;
+        opt.textContent = `\u2194 ${rRt ? rRt.name : '?'}: "${r.text}"`;
+        if (attr.parentType === 'relationship' && attr.parentId === r.id) opt.selected = true;
+        parentSel.appendChild(opt);
+      });
+      parentSel.addEventListener('click', e => e.stopPropagation());
+      parentSel.addEventListener('change', e => {
+        e.stopPropagation();
+        pushUndo();
+        const target = state.attrAnnotations.find(a => a.id === attr.id);
+        if (target) {
+          const [pType, pId] = e.target.value.split(':');
+          target.parentType = pType;
+          target.parentId   = pId;
+        }
+        render();
+      });
+
+      label.appendChild(typeSel);
+      label.appendChild(parentSel);
+    } else {
+      label.textContent = `${at ? at.name : '?'}: "${attr.text}"  \u00b7  ${attr.start}\u2013${attr.end}`;
+      label.style.color = color;
+    }
+
+    const delBtn = document.createElement('button');
+    delBtn.className = 'annotation-delete-btn attr-del-btn';
+    delBtn.title = 'Delete attribute';
+    delBtn.textContent = '\u00d7';
+    delBtn.addEventListener('click', e => {
+      e.stopPropagation();
+      deleteAttrAnnotation(attr.id);
+    });
+
+    sub.appendChild(diamond);
+    sub.appendChild(label);
+    sub.appendChild(delBtn);
+
+    sub.addEventListener('click', e => {
+      e.stopPropagation();
+      state.selectedAttrAnnId     = (state.selectedAttrAnnId === attr.id) ? null : attr.id;
+      state.selectedAnnotationId  = null;
+      state.selectedRelAnnId      = null;
+      render();
+      if (state.mode === 'labeling') {
+        const span = DOM.textDisplay.querySelector(`[data-attr-id="${attr.id}"]`);
+        if (span) span.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      }
+    });
+
+    DOM.annotationsList.appendChild(sub);
   });
 }
 
@@ -1926,6 +2398,8 @@ function updateDocStatus() {
 function deleteAnnotation(id) {
   pushUndo();
   state.annotations = state.annotations.filter(a => a.id !== id);
+  // Remove attributes whose parent was this entity
+  state.attrAnnotations = state.attrAnnotations.filter(a => !(a.parentType === 'entity' && a.parentId === id));
   if (state.selectedAnnotationId === id) state.selectedAnnotationId = null;
   render();
 }
@@ -1933,8 +2407,31 @@ function deleteAnnotation(id) {
 function deleteRelAnnotation(id) {
   pushUndo();
   state.relAnnotations = state.relAnnotations.filter(a => a.id !== id);
+  // Remove attributes whose parent was this relationship
+  state.attrAnnotations = state.attrAnnotations.filter(a => !(a.parentType === 'relationship' && a.parentId === id));
   if (state.selectedRelAnnId === id) state.selectedRelAnnId = null;
   render();
+}
+
+function deleteAttrAnnotation(id) {
+  pushUndo();
+  state.attrAnnotations = state.attrAnnotations.filter(a => a.id !== id);
+  if (state.selectedAttrAnnId === id) state.selectedAttrAnnId = null;
+  render();
+}
+
+function deleteAttrType(id) {
+  const count = state.attrAnnotations.filter(a => a.attrTypeId === id).length;
+  const msg = count > 0
+    ? `Delete attribute type and its ${count} annotation(s)?`
+    : 'Delete this attribute type?';
+  confirm(msg, () => {
+    pushUndo();
+    state.attrTypes = state.attrTypes.filter(at => at.id !== id);
+    state.attrAnnotations = state.attrAnnotations.filter(a => a.attrTypeId !== id);
+    if (state.activeAttrTypeId === id) state.activeAttrTypeId = null;
+    render();
+  });
 }
 
 function deleteEntityType(id) {
@@ -1978,8 +2475,11 @@ function pushUndo() {
     entityTypes: state.entityTypes,
     relAnnotations: state.relAnnotations,
     relationshipTypes: state.relationshipTypes,
+    attrAnnotations: state.attrAnnotations,
+    attrTypes: state.attrTypes,
     activeEntityTypeId: state.activeEntityTypeId,
     activeRelTypeId: state.activeRelTypeId,
+    activeAttrTypeId: state.activeAttrTypeId,
     mode: state.mode,
   }));
   if (state.undoStack.length > 50) state.undoStack.shift();
@@ -1993,11 +2493,15 @@ function undo() {
   state.entityTypes = prev.entityTypes;
   state.relAnnotations = prev.relAnnotations || [];
   state.relationshipTypes = prev.relationshipTypes || state.relationshipTypes;
+  state.attrAnnotations = prev.attrAnnotations || [];
+  state.attrTypes = prev.attrTypes || state.attrTypes;
   state.activeEntityTypeId = prev.activeEntityTypeId;
   state.activeRelTypeId = prev.activeRelTypeId || null;
+  state.activeAttrTypeId = prev.activeAttrTypeId || null;
   state.mode = prev.mode;
   state.selectedAnnotationId = null;
   state.selectedRelAnnId = null;
+  state.selectedAttrAnnId = null;
   DOM.rawTextInput.value = state.text;
   render();
 }
@@ -2007,7 +2511,7 @@ function undo() {
 // ─────────────────────────────────────────────────────────────────────────────
 
 // Increment whenever defaults change; forces type reset.
-const ENTITY_SCHEMA_VERSION = 4;
+const ENTITY_SCHEMA_VERSION = 5;
 
 function saveToStorage() {
   try {
@@ -2018,8 +2522,11 @@ function saveToStorage() {
       annotations: state.annotations,
       relationshipTypes: state.relationshipTypes,
       relAnnotations: state.relAnnotations,
+      attrTypes: state.attrTypes,
+      attrAnnotations: state.attrAnnotations,
       activeEntityTypeId: state.activeEntityTypeId,
       activeRelTypeId: state.activeRelTypeId,
+      activeAttrTypeId: state.activeAttrTypeId,
       mode: state.mode,
       nextId,
     }));
@@ -2034,12 +2541,15 @@ function loadFromStorage() {
     if ((saved.schemaVersion || 1) >= ENTITY_SCHEMA_VERSION) {
       state.entityTypes       = saved.entityTypes       || state.entityTypes;
       state.relationshipTypes = saved.relationshipTypes  || state.relationshipTypes;
+      state.attrTypes         = saved.attrTypes         || state.attrTypes;
     }
     state.text               = saved.text               || '';
     state.annotations        = saved.annotations        || [];
     state.relAnnotations     = saved.relAnnotations     || [];
+    state.attrAnnotations    = saved.attrAnnotations    || [];
     state.activeEntityTypeId = saved.activeEntityTypeId  || null;
     state.activeRelTypeId    = saved.activeRelTypeId     || null;
+    state.activeAttrTypeId   = saved.activeAttrTypeId    || null;
     state.mode               = saved.mode               || 'input';
     nextId                   = saved.nextId              || nextId;
     DOM.rawTextInput.value   = state.text;
