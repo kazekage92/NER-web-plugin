@@ -53,6 +53,29 @@
           </div>
         </div>
 
+        <div class="panel-section" id="gemini-settings-section">
+          <h3>
+            AI (Gemini)
+            <span id="gemini-status-dot" class="gemini-status-dot" title="Gemini key not set"></span>
+          </h3>
+          <div class="gemini-key-row">
+            <input
+              type="password"
+              id="gemini-api-key-input"
+              class="gemini-key-input"
+              placeholder="Paste Gemini API key…"
+              autocomplete="off"
+              spellcheck="false"
+            />
+            <button id="btn-save-gemini-key" class="btn btn-sm btn-secondary">Save</button>
+            <button id="btn-clear-gemini-key" class="btn btn-sm btn-ghost">Clear</button>
+          </div>
+          <p class="gemini-key-hint">
+            Stored in browser only — never written to any file or pushed to git.<br>
+            Get a free key at <a href="https://aistudio.google.com/apikey" target="_blank" rel="noopener">aistudio.google.com</a>.
+          </p>
+        </div>
+
         <div class="panel-section">
           <h3>Keyboard Shortcuts</h3>
           <ul class="shortcuts-list">

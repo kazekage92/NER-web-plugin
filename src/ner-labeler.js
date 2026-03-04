@@ -166,6 +166,25 @@ function bindEvents() {
 
   (DOM.btnAutoLabel || document.getElementById('btn-auto-label'))
     ?.addEventListener('click', handleAutoLabel);
+
+  // ── Gemini API key management ────────────────────────────────────────────
+  // The key lives ONLY in localStorage — it is never written to any file and
+  // is therefore never at risk of being committed or pushed to a repository.
+  _geminiUpdateStatusDot();
+  document.getElementById('btn-save-gemini-key')?.addEventListener('click', () => {
+    const key = document.getElementById('gemini-api-key-input')?.value.trim();
+    if (!key) return;
+    localStorage.setItem('gemini-api-key', key);
+    document.getElementById('gemini-api-key-input').value = '';
+    _geminiUpdateStatusDot();
+  });
+  document.getElementById('btn-clear-gemini-key')?.addEventListener('click', () => {
+    localStorage.removeItem('gemini-api-key');
+    const inp = document.getElementById('gemini-api-key-input');
+    if (inp) inp.value = '';
+    _geminiUpdateStatusDot();
+  });
+
   DOM.btnStartLabeling.addEventListener('click', handleStartLabeling);
   DOM.btnEditText.addEventListener('click', handleEditText);
 
@@ -897,12 +916,176 @@ function autoDetectRelationships(text, entityAnnotations, entityTypes) {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// ─────────────────────────────────────────────────────────────────────────────
+// Gemini AI Integration
+// ─────────────────────────────────────────────────────────────────────────────
+
+/** Updates the green/grey status dot next to the "AI (Gemini)" heading. */
+function _geminiUpdateStatusDot() {
+  const dot = document.getElementById('gemini-status-dot');
+  if (!dot) return;
+  const hasKey = !!localStorage.getItem('gemini-api-key');
+  dot.classList.toggle('active', hasKey);
+  dot.title = hasKey ? 'Gemini key saved — AI-assisted labeling enabled' : 'Gemini key not set';
+}
+
+/**
+ * Calls Gemini 2.5 Flash to extract named entities from `text`.
+ * Returns an array of {start, end, type} in the same format as autoDetectNER,
+ * where `type` is one of the _NER_TYPE_MAP keys (PERSON, ORG, LOCATION, DATE,
+ * MONEY, PHYSICAL_ITEM) or a direct entity-type name (COMPANY, LOCATION …).
+ *
+ * The key is read from localStorage — it never appears in source code.
+ */
+async function callGeminiNER(text, apiKey) {
+  // Build the list of entity type names active in this session so the prompt
+  // stays aligned with whatever types the user has configured.
+  const typeNames = state.entityTypes.map(e => e.name).join(', ');
+
+  const prompt =
+    `You are a Named Entity Recognition expert specialising in Malaysian financial and business news.\n` +
+    `Extract ALL named entities from the text. Return ONLY a minified JSON array — no explanation, no markdown.\n\n` +
+    `Entity types to use (choose the closest match): ${typeNames}\n\n` +
+    `Key rules:\n` +
+    `- Prefer the LONGEST meaningful phrase over a single head word.\n` +
+    `  "Sarawak government"        → COMPANY   (NOT "Sarawak" → LOCATION)\n` +
+    `  "Sarawak Energy Berhad"     → COMPANY\n` +
+    `  "Malaysia Airlines"         → COMPANY\n` +
+    `  "Johor Port Authority"      → COMPANY\n` +
+    `- Government bodies, agencies, ministries, authorities → COMPANY\n` +
+    `- A place name with no organisational context → LOCATION\n` +
+    `- Full person names → PEOPLE\n` +
+    `- Dates, years, time periods → TIME\n` +
+    `- Monetary figures, physical assets → ITEM\n` +
+    `- List each DISTINCT entity phrase once; the app will find all occurrences.\n\n` +
+    `Output format exactly: [{"text":"entity text","type":"TYPE"}, ...]\n\n` +
+    `Text:\n${text}`;
+
+  const resp = await fetch(
+    `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${encodeURIComponent(apiKey)}`,
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        contents: [{ parts: [{ text: prompt }] }],
+        generationConfig: { temperature: 0.1, responseMimeType: 'application/json' },
+      }),
+    }
+  );
+  if (!resp.ok) {
+    const err = await resp.text().catch(() => resp.statusText);
+    throw new Error(`Gemini ${resp.status}: ${err}`);
+  }
+
+  const data   = await resp.json();
+  const raw    = data.candidates?.[0]?.content?.parts?.[0]?.text ?? '[]';
+  const parsed = JSON.parse(raw);
+
+  // Map Gemini type names → internal NER keys for _NER_TYPE_MAP resolution.
+  // Gemini may return the entity-type names directly ("COMPANY", "LOCATION"…)
+  // or common aliases ("ORG", "PERSON"…); both are handled below.
+  const TYPE_ALIAS = {
+    ORG: 'ORG', ORGANISATION: 'ORG', ORGANIZATION: 'ORG', COMPANY: 'ORG',
+    PERSON: 'PERSON', PEOPLE: 'PERSON', PER: 'PERSON',
+    LOC: 'LOCATION', GPE: 'LOCATION',
+    DATE: 'DATE', TIME: 'DATE',
+    MONEY: 'MONEY', ITEM: 'MONEY',
+    PHYSICAL_ITEM: 'PHYSICAL_ITEM',
+  };
+
+  // Build text→type map (longer phrases win if ambiguous).
+  const entityMap = new Map();
+  for (const ent of parsed) {
+    if (!ent?.text || !ent?.type) continue;
+    const t = TYPE_ALIAS[ent.type.toUpperCase()] ?? ent.type.toUpperCase();
+    const existing = entityMap.get(ent.text);
+    // Keep whichever was already stored; first occurrence wins.
+    if (!existing) entityMap.set(ent.text, t);
+  }
+
+  // Find ALL occurrences of each entity phrase in the text.
+  const result = [];
+  for (const [phrase, type] of entityMap) {
+    let pos = 0;
+    while (true) {
+      const idx = text.indexOf(phrase, pos);
+      if (idx === -1) break;
+      result.push({ start: idx, end: idx + phrase.length, type });
+      pos = idx + 1;
+    }
+  }
+  return result;
+}
+
+/**
+ * Merges Gemini detections (higher confidence) with regex detections (fallback).
+ * Gemini spans take priority; regex spans that don't overlap any Gemini span
+ * are appended so nothing is lost.
+ */
+function _mergeNERDetections(gemini, regex) {
+  // De-overlap gemini results first (sort start asc, length desc → keep longest)
+  gemini.sort((a, b) => a.start - b.start || (b.end - b.start) - (a.end - a.start));
+  const primary = [];
+  let last = -1;
+  for (const r of gemini) {
+    if (r.start >= last) { primary.push(r); last = r.end; }
+  }
+
+  // Add regex results that don't overlap any primary span.
+  for (const r of regex) {
+    const overlaps = primary.some(p => r.start < p.end && r.end > p.start);
+    if (!overlaps) primary.push(r);
+  }
+
+  // Final sort by position.
+  primary.sort((a, b) => a.start - b.start || (b.end - b.start) - (a.end - a.start));
+  const out = []; last = -1;
+  for (const r of primary) {
+    if (r.start >= last) { out.push(r); last = r.end; }
+  }
+  return out;
+}
+
 // Auto-Label Handler
 // ─────────────────────────────────────────────────────────────────────────────
 
-function handleAutoLabel() {
+async function handleAutoLabel() {
   const text = DOM.rawTextInput.value;
   if (!text.trim()) return;
+
+  // ── Entity detection: Gemini (if key set) merged with regex fallback ──────
+  const apiKey  = localStorage.getItem('gemini-api-key');
+  const btnAuto = DOM.btnAutoLabel;
+  let detections;
+
+  if (apiKey) {
+    // Show loading state while waiting for the API response.
+    if (btnAuto) { btnAuto.textContent = 'Labeling…'; btnAuto.classList.add('loading'); }
+    try {
+      const [geminiDets, regexDets] = await Promise.all([
+        callGeminiNER(text, apiKey),
+        Promise.resolve(autoDetectNER(text)),
+      ]);
+      detections = _mergeNERDetections(geminiDets, regexDets);
+    } catch (err) {
+      console.warn('Gemini NER failed, falling back to regex:', err);
+      // Surface a brief non-blocking notice so the user knows what happened.
+      const notice = document.createElement('div');
+      notice.textContent = `Gemini error — using regex only. (${err.message})`;
+      Object.assign(notice.style, {
+        position:'fixed', bottom:'16px', right:'16px', zIndex:'9999',
+        background:'#f87171', color:'#fff', padding:'8px 14px',
+        borderRadius:'6px', fontSize:'12px', maxWidth:'320px',
+      });
+      document.body.appendChild(notice);
+      setTimeout(() => notice.remove(), 6000);
+      detections = autoDetectNER(text);
+    } finally {
+      if (btnAuto) { btnAuto.textContent = 'Auto-Label'; btnAuto.classList.remove('loading'); }
+    }
+  } else {
+    detections = autoDetectNER(text);
+  }
 
   pushUndo();
   state.text = text;
@@ -911,14 +1094,13 @@ function handleAutoLabel() {
   state.relAnnotations = [];
   state.attrAnnotations = [];
 
-  // Entity detection
-  const detections = autoDetectNER(text);
   let entAdded = 0;
-
   detections.forEach(det => {
-    const targetName = _NER_TYPE_MAP[det.type];
+    // det.type may be an internal NER key (from regex) or an entity-type name
+    // (from Gemini).  Try both mappings so either path works.
+    const targetName = _NER_TYPE_MAP[det.type] ?? det.type;
     if (!targetName) return;
-    const et = state.entityTypes.find(e => e.name.toUpperCase() === targetName);
+    const et = state.entityTypes.find(e => e.name.toUpperCase() === targetName.toUpperCase());
     if (!et) return;
     const overlaps = state.annotations.some(a => !(det.end <= a.start || det.start >= a.end));
     if (overlaps) return;

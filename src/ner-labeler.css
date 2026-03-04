@@ -872,3 +872,50 @@ kbd {
   .panel-right { border-top: 1px solid var(--border); }
   body { overflow: auto; }
 }
+
+/* ===== Gemini API Key Settings ===== */
+.gemini-status-dot {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--border);
+  margin-left: 6px;
+  vertical-align: middle;
+  transition: background 0.2s;
+}
+.gemini-status-dot.active { background: #22c55e; }
+
+.gemini-key-row {
+  display: flex;
+  gap: 4px;
+  margin-top: 6px;
+}
+.gemini-key-input {
+  flex: 1;
+  min-width: 0;
+  padding: 4px 6px;
+  font-size: 11px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: var(--bg);
+  color: var(--text);
+  outline: none;
+}
+.gemini-key-input:focus { border-color: var(--primary); }
+
+.gemini-key-hint {
+  margin-top: 6px;
+  font-size: 10px;
+  color: var(--text-muted);
+  line-height: 1.4;
+}
+.gemini-key-hint a { color: var(--primary); text-decoration: none; }
+.gemini-key-hint a:hover { text-decoration: underline; }
+
+/* Auto-label loading state */
+#btn-auto-label.loading {
+  opacity: 0.6;
+  cursor: wait;
+  pointer-events: none;
+}
