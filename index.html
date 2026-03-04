@@ -14,7 +14,8 @@
       <div class="header-actions">
         <button id="btn-import" class="btn btn-secondary" title="Import JSON">Import</button>
         <button id="btn-export" class="btn btn-secondary" title="Export labeled data as JSON">Export JSON</button>
-        <button id="btn-export-xlsx" class="btn btn-primary" title="Export relationships and entities as Excel workbook">Export XLSX</button>
+        <button id="btn-export-xlsx" class="btn btn-secondary" title="Export relationships and entities as Excel workbook">Export XLSX</button>
+        <button id="btn-contribute" class="btn btn-contribute" title="Push corrected annotations to the training dataset on GitHub">Contribute ↑</button>
         <input type="file" id="import-file" accept=".json" style="display:none" />
       </div>
     </header>
@@ -51,6 +52,39 @@
             <input type="color" id="new-attr-color" class="input-color" value="#e67e22" title="Pick color" />
             <button id="btn-add-attr" class="btn btn-add">Add</button>
           </div>
+        </div>
+
+        <div class="panel-section" id="github-settings-section">
+          <h3>
+            Training Data (GitHub)
+            <span id="github-status-dot" class="gemini-status-dot" title="GitHub not configured"></span>
+          </h3>
+          <div class="gemini-key-row">
+            <input
+              type="password"
+              id="github-pat-input"
+              class="gemini-key-input"
+              placeholder="GitHub Personal Access Token…"
+              autocomplete="off"
+              spellcheck="false"
+            />
+          </div>
+          <div class="gemini-key-row" style="margin-top:4px">
+            <input
+              type="text"
+              id="github-repo-input"
+              class="gemini-key-input"
+              placeholder="owner/repository"
+              autocomplete="off"
+              spellcheck="false"
+            />
+            <button id="btn-save-github" class="btn btn-sm btn-secondary">Save</button>
+            <button id="btn-clear-github" class="btn btn-sm btn-ghost">Clear</button>
+          </div>
+          <p class="gemini-key-hint">
+            Token stored in browser only — never committed to git.<br>
+            Each correction is appended to <code>training-data/annotations.jsonl</code>.
+          </p>
         </div>
 
         <div class="panel-section" id="gemini-settings-section">
@@ -126,6 +160,7 @@
           ></div>
           <div class="labeling-footer">
             <button id="btn-edit-text" class="btn btn-ghost btn-sm">Edit Text</button>
+            <button id="btn-contribute-footer" class="btn btn-contribute btn-sm" title="Push corrected annotations to the training dataset on GitHub">Contribute ↑</button>
           </div>
         </div>
       </section>

@@ -100,6 +100,8 @@ const DOM = {
   btnClearLabels:     $('btn-clear-labels'),
   btnExport:          $('btn-export'),
   btnExportXlsx:      $('btn-export-xlsx'),
+  btnContribute:      $('btn-contribute'),
+  btnContributeFooter:$('btn-contribute-footer'),
   btnImport:          $('btn-import'),
   importFile:         $('import-file'),
   annotationsList:    $('annotations-list'),
@@ -183,6 +185,26 @@ function bindEvents() {
     const inp = document.getElementById('gemini-api-key-input');
     if (inp) inp.value = '';
     _geminiUpdateStatusDot();
+  });
+
+  // ── GitHub training-data settings ─────────────────────────────────────────
+  _githubUpdateStatusDot();
+  document.getElementById('btn-save-github')?.addEventListener('click', () => {
+    const pat  = document.getElementById('github-pat-input')?.value.trim();
+    const repo = document.getElementById('github-repo-input')?.value.trim();
+    if (pat)  localStorage.setItem('github-pat',  pat);
+    if (repo) localStorage.setItem('github-repo', repo);
+    document.getElementById('github-pat-input').value  = '';
+    document.getElementById('github-repo-input').value = '';
+    _githubUpdateStatusDot();
+  });
+  document.getElementById('btn-clear-github')?.addEventListener('click', () => {
+    localStorage.removeItem('github-pat');
+    localStorage.removeItem('github-repo');
+    _githubUpdateStatusDot();
+  });
+  [DOM.btnContribute, DOM.btnContributeFooter].forEach(btn => {
+    btn?.addEventListener('click', handleContribute);
   });
 
   DOM.btnStartLabeling.addEventListener('click', handleStartLabeling);
@@ -1154,16 +1176,7 @@ async function handleAutoLabel() {
       detections = _mergeNERDetections(geminiDets, regexDets);
     } catch (err) {
       console.warn('Gemini NER failed, falling back to regex:', err);
-      // Surface a brief non-blocking notice so the user knows what happened.
-      const notice = document.createElement('div');
-      notice.textContent = `Gemini error — using regex only. (${err.message})`;
-      Object.assign(notice.style, {
-        position:'fixed', bottom:'16px', right:'16px', zIndex:'9999',
-        background:'#f87171', color:'#fff', padding:'8px 14px',
-        borderRadius:'6px', fontSize:'12px', maxWidth:'320px',
-      });
-      document.body.appendChild(notice);
-      setTimeout(() => notice.remove(), 6000);
+      _showToast(`Gemini error — using regex only. (${err.message})`, 'error', 6000);
       detections = autoDetectNER(text);
     } finally {
       if (btnAuto) { btnAuto.textContent = 'Auto-Label'; btnAuto.classList.remove('loading'); }
@@ -1444,6 +1457,145 @@ function handleKeydown(e) {
     state.selectedAttrAnnId = null;
     render();
   }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// GitHub Training-Data Contribution
+// Push human-corrected annotations as a new JSONL line to a GitHub repo so
+// the dataset grows over time and can be used for model fine-tuning.
+// The PAT and repo are stored only in localStorage — never in any file.
+// ─────────────────────────────────────────────────────────────────────────────
+
+function _githubUpdateStatusDot() {
+  const dot = document.getElementById('github-status-dot');
+  if (!dot) return;
+  const ready = !!(localStorage.getItem('github-pat') && localStorage.getItem('github-repo'));
+  dot.classList.toggle('active', ready);
+  dot.title = ready
+    ? `GitHub configured — contributions will go to ${localStorage.getItem('github-repo')}`
+    : 'GitHub PAT and repository not set';
+}
+
+/**
+ * Serialises the current annotations into a single training-data record and
+ * appends it as a new line to `training-data/annotations.jsonl` in the
+ * configured GitHub repository.
+ *
+ * Uses the GitHub Contents API:
+ *   GET  /repos/{owner}/{repo}/contents/{path}  → read file + SHA
+ *   PUT  /repos/{owner}/{repo}/contents/{path}  → create/update file
+ */
+async function pushTrainingData() {
+  const pat  = localStorage.getItem('github-pat');
+  const repo = localStorage.getItem('github-repo');
+  if (!pat || !repo)
+    throw new Error('GitHub PAT and repository must be saved in the AI settings panel first.');
+
+  if (!state.text?.trim() || !state.annotations.length)
+    throw new Error('Nothing to contribute — add at least one entity label first.');
+
+  const branch  = 'main';
+  const path    = 'training-data/annotations.jsonl';
+  const apiBase = `https://api.github.com/repos/${repo}/contents/${path}`;
+  const headers = { Authorization: `Bearer ${pat}`, 'Content-Type': 'application/json' };
+
+  // Build the new training record (same schema as Export JSON, one object per line).
+  const record = {
+    id:        crypto.randomUUID?.() ?? Date.now().toString(36),
+    timestamp: new Date().toISOString(),
+    source:    'human-corrected',
+    text:      state.text,
+    entities: state.annotations.map(a => {
+      const et = state.entityTypes.find(e => e.id === a.entityTypeId);
+      return { start: a.start, end: a.end, text: a.text, label: et?.name ?? 'UNKNOWN' };
+    }),
+    relationships: state.relAnnotations.map(ra => {
+      const rt  = state.relationshipTypes.find(r => r.id === ra.relTypeId);
+      const sub = state.annotations.find(e => e.id === ra.subjectId);
+      const obj = state.annotations.find(e => e.id === ra.objectId);
+      return {
+        start: ra.start, end: ra.end, text: ra.text,
+        label:   rt?.name  ?? 'UNKNOWN',
+        subject: sub?.text ?? null,
+        object:  obj?.text ?? null,
+      };
+    }),
+    attributes: state.attrAnnotations.map(a => {
+      const at  = state.attrTypes.find(t => t.id === a.attrTypeId);
+      const par = a.parentType === 'entity'
+        ? state.annotations.find(e => e.id === a.parentId)
+        : state.relAnnotations.find(r => r.id === a.parentId);
+      return { start: a.start, end: a.end, text: a.text, label: at?.name ?? 'UNKNOWN', parentText: par?.text ?? null };
+    }),
+  };
+  const newLine = JSON.stringify(record) + '\n';
+
+  // Fetch the existing file (to get its SHA for the update, and append content).
+  let existingContent = '';
+  let sha = undefined;
+  const getResp = await fetch(`${apiBase}?ref=${branch}`, { headers });
+  if (getResp.ok) {
+    const fileData = await getResp.json();
+    sha = fileData.sha;
+    // Content is base64-encoded by the API.
+    existingContent = decodeURIComponent(
+      atob(fileData.content.replace(/\n/g, ''))
+        .split('')
+        .map(c => '%' + c.charCodeAt(0).toString(16).padStart(2, '0'))
+        .join('')
+    );
+  } else if (getResp.status !== 404) {
+    const err = await getResp.text().catch(() => getResp.statusText);
+    throw new Error(`GitHub read error ${getResp.status}: ${err}`);
+  }
+
+  // Encode the updated file content (existing lines + new line).
+  const updatedContent = existingContent + newLine;
+  const encoded = btoa(unescape(encodeURIComponent(updatedContent)));
+
+  const putBody = {
+    message: `training: add human-corrected annotation (${new Date().toISOString().slice(0,10)})`,
+    content: encoded,
+    branch,
+    ...(sha ? { sha } : {}),
+  };
+  const putResp = await fetch(apiBase, { method: 'PUT', headers, body: JSON.stringify(putBody) });
+  if (!putResp.ok) {
+    const err = await putResp.text().catch(() => putResp.statusText);
+    throw new Error(`GitHub write error ${putResp.status}: ${err}`);
+  }
+
+  const result = await putResp.json();
+  return result.content?.html_url ?? `https://github.com/${repo}/blob/${branch}/${path}`;
+}
+
+async function handleContribute() {
+  const btns = [DOM.btnContribute, DOM.btnContributeFooter].filter(Boolean);
+  const label = btns[0]?.textContent ?? 'Contribute ↑';
+  btns.forEach(b => { b.textContent = 'Pushing…'; b.classList.add('loading'); });
+  try {
+    const url = await pushTrainingData();
+    _showToast(`Contribution saved! <a href="${url}" target="_blank" rel="noopener">View on GitHub ↗</a>`, 'success', 7000);
+  } catch (err) {
+    _showToast(`Contribute failed: ${err.message}`, 'error', 8000);
+  } finally {
+    btns.forEach(b => { b.textContent = label; b.classList.remove('loading'); });
+  }
+}
+
+/** Brief non-blocking notification bar (success = green, error = red). */
+function _showToast(html, type = 'success', duration = 5000) {
+  const toast = document.createElement('div');
+  toast.innerHTML = html;
+  toast.style.cssText = [
+    'position:fixed', 'bottom:20px', 'right:20px', 'z-index:9999',
+    'padding:10px 16px', 'border-radius:7px', 'font-size:12px',
+    'max-width:360px', 'line-height:1.5', 'box-shadow:0 2px 8px rgba(0,0,0,.25)',
+    `background:${type === 'success' ? '#16a34a' : '#dc2626'}`, 'color:#fff',
+  ].join(';');
+  toast.querySelectorAll('a').forEach(a => Object.assign(a.style, { color: '#fff', fontWeight: '700' }));
+  document.body.appendChild(toast);
+  setTimeout(() => toast.remove(), duration);
 }
 
 function handleExport() {
