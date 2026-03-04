@@ -891,6 +891,27 @@ function findLinkedEntities(relStart, relEnd, entityAnnotations, maxDist, entity
  */
 function autoDetectRelationships(text, entityAnnotations, entityTypes) {
   const MAX_LINK_DIST = 300;
+
+  // ── Paragraph boundaries ──────────────────────────────────────────────────
+  // A relationship keyword and both its subject/object entities must all sit
+  // within the same paragraph. Paragraphs are delimited by one or more blank
+  // lines (\n\n+). This prevents linking entities that are merely near each
+  // other in character distance but actually belong to different thoughts.
+  const paragraphs = [];
+  const paraRe = /\n\n+/g;
+  let pStart = 0;
+  let boundary;
+  while ((boundary = paraRe.exec(text)) !== null) {
+    paragraphs.push({ start: pStart, end: boundary.index });
+    pStart = boundary.index + boundary[0].length;
+  }
+  paragraphs.push({ start: pStart, end: text.length });
+
+  function getPara(pos) {
+    return paragraphs.find(p => pos >= p.start && pos < p.end)
+      ?? { start: 0, end: text.length };
+  }
+
   const res = [];
 
   _REL_PATTERNS.forEach(({ name, patterns }) => {
@@ -908,11 +929,14 @@ function autoDetectRelationships(text, entityAnnotations, entityTypes) {
   const deduped = []; let last = -1;
   for (const r of res) { if (r.start >= last) { deduped.push(r); last = r.end; } }
 
-  // Link each keyword to nearest subject/object entity
-  return deduped.map(r => ({
-    ...r,
-    ...findLinkedEntities(r.start, r.end, entityAnnotations, MAX_LINK_DIST, entityTypes),
-  }));
+  // Link each keyword to the nearest subject/object entity in the SAME paragraph
+  return deduped.map(r => {
+    const para         = getPara(r.start);
+    const paraEntities = entityAnnotations.filter(
+      a => a.start >= para.start && a.end <= para.end
+    );
+    return { ...r, ...findLinkedEntities(r.start, r.end, paraEntities, MAX_LINK_DIST, entityTypes) };
+  });
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -1025,27 +1049,37 @@ async function callGeminiNER(text, apiKey) {
   }
 
   // ── Post-processing sanity filter ─────────────────────────────────────────
-  // Belt-and-suspenders check in case the prompt still allows through obviously
-  // wrong results.  Filters run BEFORE the text-search step so bad phrases
-  // never become annotations.
+  // Belt-and-suspenders check for results the prompt still lets through.
 
-  // Clauses / sentence fragments: start with a pronoun or common article
-  const CLAUSE_START = /^(it|they|he|she|we|the|a|an|this|that|these|those|its|their|his|her)\s/i;
+  // 1. Clause/sentence fragments — start with a pronoun, article, or verb form
+  const CLAUSE_START = /^(it|they|he|she|we|the|a|an|this|that|these|those|its|their|his|her|there|which|who|what|when|where|is|are|was|were|has|have|had|will|would|could|should|may|might|shall|for|with|by|to|of|in|on|at|from|and|but|or|so|yet|because)\s/i;
 
-  // Generic commodity / action noun phrases that are never company names
-  const GENERIC_ORG_PHRASE = /^(supply|production|sales|distribution|export|import|delivery|purchase|procurement|agreement|contract|deal|plan|project|programme|program|proposal|bid|tender|services?|operations?|activities|business|industry|sector|market|segment)\s/i;
-
-  // Descriptors followed by a company name — strip the descriptor prefix.
-  // e.g. "Malaysian energy giant Petroliam Nasional Bhd" → keep the last
-  // proper-noun part that matches the actual text after stripping.
-  const DESCRIPTOR_PREFIX = /^(?:[A-Z][a-z]+ ){1,3}(?:giant|firm|company|group|conglomerate|unit|arm|wing|subsidiary|associate|affiliate|operator|producer|supplier|developer|builder|contractor|bank|lender|insurer)\s+/;
+  // 2. Structural COMPANY validation — a company name MUST satisfy at least one:
+  //    a) ≥2 words starting with a capital letter (proper nouns)
+  //    b) ends with a recognised legal/org suffix (handles single-word names like "PETRONAS" if we also allow)
+  //    c) single all-uppercase word of 2+ chars (acronym: PETRONAS, TNB, MAS…)
+  const ORG_LEGAL_SUFFIX = /\b(?:bhd|berhad|sdn|inc|corp|ltd|llc|llp|plc|pte|nv|ag|sa|co\b|authority|authorities|commission|commissions|council|councils|board|boards|ministry|ministries|department|departments|agency|agencies|foundation|fund|funds|corporation|corporations|holdings|group|enterprise|enterprises|bank|banks|airline|airlines|airport|university|hospital|government|govt|institute|association|federation|union|alliance|organization|organisation)\b/i;
 
   for (const [phrase, type] of [...entityMap]) {
+    // Rule 1: drop clause/fragment starts for ALL types
     if (CLAUSE_START.test(phrase)) { entityMap.delete(phrase); continue; }
-    if (type === 'ORG' && GENERIC_ORG_PHRASE.test(phrase)) { entityMap.delete(phrase); continue; }
 
-    // Try stripping a descriptor prefix and re-register the cleaner name.
+    // Rule 2: structural COMPANY check
     if (type === 'ORG') {
+      const words     = phrase.trim().split(/\s+/);
+      const capCount  = words.filter(w => /^[A-Z]/.test(w)).length;
+      const isAcronym = words.length === 1 && /^[A-Z]{2,}$/.test(words[0]);
+      const hasOrgSuffix = ORG_LEGAL_SUFFIX.test(phrase);
+
+      if (!isAcronym && capCount < 2 && !hasOrgSuffix) {
+        entityMap.delete(phrase);
+        continue;
+      }
+
+      // Rule 3: strip leading descriptor ("Malaysian energy giant Petroliam Nasional Bhd"
+      //         → "Petroliam Nasional Bhd"). A descriptor word is a common adjective or
+      //         role noun that precedes the actual proper name.
+      const DESCRIPTOR_PREFIX = /^(?:[A-Z][a-z]+ ){1,3}(?:giant|firm|company|group|conglomerate|unit|arm|wing|subsidiary|associate|affiliate|operator|producer|supplier|developer|builder|contractor|bank|lender|insurer)\s+/;
       const stripped = phrase.replace(DESCRIPTOR_PREFIX, '');
       if (stripped !== phrase && stripped.length > 3) {
         entityMap.delete(phrase);
