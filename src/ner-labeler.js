@@ -259,6 +259,32 @@ const _NER_MONEY_RE = /\bRM\s*[\d,.]+(?:\s*(?:million|billion|trillion|mil|bil|[
 
 const _NER_ORG_RE = /\b(?:[A-Z][a-zA-Z&''\-]+(?:\s+(?:&\s+)?[A-Z][a-zA-Z&''\-]+)*\s+(?:Inc\.?|Corp\.?|Ltd\.?|LLC|LLP|PLC|Co\.?|Company|Group|Holdings?|Foundation|Institute|University|College|School|Hospital|Bank|Fund|Trust|Association|Federation|Union|Alliance|Organization|Department|Agency|Bureau|Ministry|Commission|Council|Authority|Corporation|Industries|International|Global|National|Systems?|Solutions?|Technologies?|Services?|Networks?|Labs?|Media|Press|Times|Post|Capital|Berhad|Bhd\.?|Sdn\s+Bhd\.?|Ventures?|Partners?|Consultants?|Resources?))\b/g;
 
+// Compound "place/name + org-indicator" pattern.
+// Matches 1-4 capitalized words followed by a word that signals an organisation,
+// including lowercase variants ("government", "ministry") that _NER_ORG_RE misses.
+// Added to the results BEFORE location detection so the longer ORG span wins
+// the de-overlap step over a shorter bare LOCATION match.
+// e.g.  "Sarawak government"      → ORG   (beats "Sarawak" → LOCATION)
+//       "Sarawak Energy Berhad"   → ORG   (beats "Sarawak" → LOCATION)
+//       "Johor Port Authority"    → ORG   (beats "Johor"   → LOCATION)
+//       "Malaysia Airlines"       → ORG   (beats "Malaysia"→ LOCATION)
+const _COMPOUND_ORG_RE = new RegExp(
+  '\\b[A-Z][\\w\'-]{1,}(?:\\s+[A-Z][\\w\'-]{1,}){0,3}\\s+' +
+  '(?:government|governments|govt|authority|authorities|ministry|ministries|' +
+  'council[s]?|commission[s]?|parliament|senate|assembl(?:y|ies)|' +
+  'department[s]?|dept|bureau[x]?|agenc(?:y|ies)|administration|' +
+  'court[s]?|board[s]?|office[s]?|foundation[s]?|fund[s]?|' +
+  'corporation[s]?|corp|holdings|group[s]?|enterprise[s]?|berhad|bhd|' +
+  'energy|power|water[s]?|gas|oil|petroleum|airline[s]?|airport[s]?|port[s]?|' +
+  'railway[s]?|metro|transit|expressway[s]?|highway[s]?|' +
+  'bank[s]?|finance|investment[s]?|capital|securities|development|' +
+  'electricit(?:y|ies)|telecom(?:munications?)?|broadcasting|' +
+  'engineering|construction|property|properties|realty|' +
+  'insurance|healthcare|pharmaceutical[s]?|mining|resources?|' +
+  'plantation[s]?|logistics|shipping|aviation|aerospace)\\b',
+  'gi'
+);
+
 const _NER_GEO_RE = /\b[A-Z][a-z]+(?:\s+[A-Z][a-z]+)*\s+(?:Street|Avenue|Boulevard|Road|Drive|Lane|Park|Square|Bridge|River|Lake|Sea|Ocean|Mountain|Bay|Island|Valley|Desert|Beach|Harbor|Harbour|Port|Airport|Station|District|County|Province|Region|Territory|City|Town|Village|Gulf|Highway|Expressway|Interchange)\b/g;
 
 const _NER_PHYSICAL_ITEM_RE = /\b(?:factor(?:y|ies)|plant[s]?|outlet[s]?|branch(?:es)?|facilit(?:y|ies)|estate[s]?|mill[s]?|mine[s]?|quarr(?:y|ies)|refiner(?:y|ies)|warehouse[s]?|terminal[s]?|depot[s]?|plantation[s]?|resort[s]?|hotel[s]?|port[s]?|jett(?:y|ies))\b/gi;
@@ -441,6 +467,12 @@ function autoDetectNER(text) {
   while ((m = pRe.exec(text)) !== null)
     if (_NER_FIRST_NAMES.has(m[0].split(' ')[0]))
       res.push({ start: m.index, end: m.index + m[0].length, type: 'PERSON' });
+
+  // ── Compound "place/name + org-indicator" → ORG ──────────────────────────
+  // Must run BEFORE the bare location passes so that "Sarawak government"
+  // produces a longer ORG span; de-overlap will then discard the shorter
+  // "Sarawak" → LOCATION span in favour of the compound match.
+  add(_COMPOUND_ORG_RE, 'ORG');
 
   // Countries → LOCATION
   _NER_COUNTRIES.forEach(c => {
