@@ -943,22 +943,45 @@ async function callGeminiNER(text, apiKey) {
   const typeNames = state.entityTypes.map(e => e.name).join(', ');
 
   const prompt =
-    `You are a Named Entity Recognition expert specialising in Malaysian financial and business news.\n` +
-    `Extract ALL named entities from the text. Return ONLY a minified JSON array — no explanation, no markdown.\n\n` +
-    `Entity types to use (choose the closest match): ${typeNames}\n\n` +
-    `Key rules:\n` +
-    `- Prefer the LONGEST meaningful phrase over a single head word.\n` +
-    `  "Sarawak government"        → COMPANY   (NOT "Sarawak" → LOCATION)\n` +
-    `  "Sarawak Energy Berhad"     → COMPANY\n` +
-    `  "Malaysia Airlines"         → COMPANY\n` +
-    `  "Johor Port Authority"      → COMPANY\n` +
-    `- Government bodies, agencies, ministries, authorities → COMPANY\n` +
-    `- A place name with no organisational context → LOCATION\n` +
-    `- Full person names → PEOPLE\n` +
-    `- Dates, years, time periods → TIME\n` +
-    `- Monetary figures, physical assets → ITEM\n` +
-    `- List each DISTINCT entity phrase once; the app will find all occurrences.\n\n` +
-    `Output format exactly: [{"text":"entity text","type":"TYPE"}, ...]\n\n` +
+    `You are a strict Named Entity Recognition system for Malaysian financial and business news.\n` +
+    `Extract ONLY proper-noun named entities. A named entity is a specific, uniquely-NAMED real-world thing.\n` +
+    `Return ONLY a minified JSON array — no explanation, no markdown.\n\n` +
+
+    `Entity types: ${typeNames}\n\n` +
+
+    `=== WHAT IS A NAMED ENTITY ===\n` +
+    `COMPANY  — The official registered/recognised name of an organisation.\n` +
+    `           ✓ "Petroliam Nasional Bhd"  ✓ "PETRONAS"  ✓ "Abu Dhabi National Oil Co"\n` +
+    `           ✓ "Ministry of Finance"  ✓ "Securities Commission"  ✓ "Sarawak government"\n` +
+    `           ✗ "Malaysian energy giant"  (a description, not the company name)\n` +
+    `           ✗ "supply of liquefied natural gas"  (a commodity phrase, not a company)\n` +
+    `           ✗ "it is coordinating with authorities"  (a clause fragment, not an entity)\n` +
+    `           ✗ "the company"  ✗ "a firm"  ✗ "the group"  (pronoun/generic references)\n\n` +
+
+    `LOCATION — A specific named place: country, city, state, region.\n` +
+    `           ✓ "Malaysia"  ✓ "Abu Dhabi"  ✓ "Sarawak"  ✓ "Middle East"\n` +
+    `           ✗ "the region"  ✗ "overseas"  (generic, not a proper name)\n\n` +
+
+    `PEOPLE   — A real person's full proper name.\n` +
+    `           ✓ "Ahmad Zahid Hamidi"  ✗ "the CEO"  ✗ "he"  ✗ "the minister"\n\n` +
+
+    `TIME     — A specific date, year, quarter, or named period.\n` +
+    `           ✓ "March 3"  ✓ "Q1 2024"  ✓ "Tuesday"  ✗ "recently"  ✗ "years"\n\n` +
+
+    `ITEM     — A specific monetary figure or tangible physical asset.\n` +
+    `           ✓ "RM 500 million"  ✓ "USD 1.2 billion"  ✗ "a large sum"\n\n` +
+
+    `=== STRICT RULES ===\n` +
+    `1. Use the OFFICIAL name of the organisation — strip leading descriptors.\n` +
+    `   Text: "Malaysian energy giant Petroliam Nasional Bhd"\n` +
+    `   ✓ {"text":"Petroliam Nasional Bhd","type":"COMPANY"}\n` +
+    `   ✗ {"text":"Malaysian energy giant Petroliam Nasional Bhd","type":"COMPANY"}\n` +
+    `2. Location + organisation-type word → COMPANY (compound name, not bare location).\n` +
+    `   "Sarawak government" → COMPANY   |   "Sarawak" alone in geographic context → LOCATION\n` +
+    `3. Never extract clauses, sentences, or common noun phrases as entities.\n` +
+    `4. List each distinct entity phrase ONCE; the app finds all occurrences.\n\n` +
+
+    `Output format: [{"text":"exact text as it appears","type":"TYPE"}, ...]\n\n` +
     `Text:\n${text}`;
 
   const resp = await fetch(
@@ -998,9 +1021,37 @@ async function callGeminiNER(text, apiKey) {
   for (const ent of parsed) {
     if (!ent?.text || !ent?.type) continue;
     const t = TYPE_ALIAS[ent.type.toUpperCase()] ?? ent.type.toUpperCase();
-    const existing = entityMap.get(ent.text);
-    // Keep whichever was already stored; first occurrence wins.
-    if (!existing) entityMap.set(ent.text, t);
+    if (!entityMap.has(ent.text)) entityMap.set(ent.text, t);
+  }
+
+  // ── Post-processing sanity filter ─────────────────────────────────────────
+  // Belt-and-suspenders check in case the prompt still allows through obviously
+  // wrong results.  Filters run BEFORE the text-search step so bad phrases
+  // never become annotations.
+
+  // Clauses / sentence fragments: start with a pronoun or common article
+  const CLAUSE_START = /^(it|they|he|she|we|the|a|an|this|that|these|those|its|their|his|her)\s/i;
+
+  // Generic commodity / action noun phrases that are never company names
+  const GENERIC_ORG_PHRASE = /^(supply|production|sales|distribution|export|import|delivery|purchase|procurement|agreement|contract|deal|plan|project|programme|program|proposal|bid|tender|services?|operations?|activities|business|industry|sector|market|segment)\s/i;
+
+  // Descriptors followed by a company name — strip the descriptor prefix.
+  // e.g. "Malaysian energy giant Petroliam Nasional Bhd" → keep the last
+  // proper-noun part that matches the actual text after stripping.
+  const DESCRIPTOR_PREFIX = /^(?:[A-Z][a-z]+ ){1,3}(?:giant|firm|company|group|conglomerate|unit|arm|wing|subsidiary|associate|affiliate|operator|producer|supplier|developer|builder|contractor|bank|lender|insurer)\s+/;
+
+  for (const [phrase, type] of [...entityMap]) {
+    if (CLAUSE_START.test(phrase)) { entityMap.delete(phrase); continue; }
+    if (type === 'ORG' && GENERIC_ORG_PHRASE.test(phrase)) { entityMap.delete(phrase); continue; }
+
+    // Try stripping a descriptor prefix and re-register the cleaner name.
+    if (type === 'ORG') {
+      const stripped = phrase.replace(DESCRIPTOR_PREFIX, '');
+      if (stripped !== phrase && stripped.length > 3) {
+        entityMap.delete(phrase);
+        if (!entityMap.has(stripped)) entityMap.set(stripped, type);
+      }
+    }
   }
 
   // Find ALL occurrences of each entity phrase in the text.
