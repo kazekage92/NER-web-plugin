@@ -919,3 +919,15 @@ kbd {
   cursor: wait;
   pointer-events: none;
 }
+
+/* ===== Contribute button ===== */
+.btn-contribute {
+  background: #16a34a;
+  color: #fff;
+  border: none;
+  font-weight: 600;
+  letter-spacing: 0.01em;
+}
+.btn-contribute:hover:not(:disabled) { background: #15803d; }
+.btn-contribute:disabled { opacity: 0.45; cursor: not-allowed; }
+.btn-contribute.loading { opacity: 0.6; cursor: wait; pointer-events: none; }
