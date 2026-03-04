@@ -975,6 +975,51 @@ function _geminiUpdateStatusDot() {
   dot.title = hasKey ? 'Gemini key saved — AI-assisted labeling enabled' : 'Gemini key not set';
 }
 
+// ── Few-shot example cache ────────────────────────────────────────────────────
+let _fewShotCache     = null;   // Array<{text, entities}> | null
+let _fewShotCacheTime = 0;
+const _FEW_SHOT_TTL   = 5 * 60 * 1000;   // 5 minutes
+
+/**
+ * Fetches the last N human-corrected examples from the training JSONL on
+ * GitHub and returns them as {text, entities[]} objects for few-shot prompting.
+ * Returns [] silently on any error (network, missing file, no credentials).
+ * Results are cached for 5 minutes to avoid a fetch on every Auto-Label click.
+ */
+async function fetchFewShotExamples(n = 5) {
+  const pat  = localStorage.getItem('github-pat');
+  const repo = localStorage.getItem('github-repo');
+  if (!pat || !repo) return [];
+
+  if (_fewShotCache && Date.now() - _fewShotCacheTime < _FEW_SHOT_TTL)
+    return _fewShotCache;
+
+  try {
+    const url  = `https://api.github.com/repos/${repo}/contents/training-data/annotations.jsonl?ref=main`;
+    const resp = await fetch(url, { headers: { Authorization: `Bearer ${pat}` } });
+    if (!resp.ok) return [];
+
+    const fileData = await resp.json();
+    // GitHub returns content as base64; decode via UTF-8-safe path.
+    const raw = decodeURIComponent(
+      atob(fileData.content.replace(/\n/g, ''))
+        .split('').map(c => '%' + c.charCodeAt(0).toString(16).padStart(2, '0')).join('')
+    );
+
+    const examples = raw.trim().split('\n')
+      .filter(l => l.trim())
+      .slice(-n)                          // take the most recent N lines
+      .map(line => { try { return JSON.parse(line); } catch { return null; } })
+      .filter(r => r?.text && Array.isArray(r.entities) && r.entities.length);
+
+    _fewShotCache     = examples;
+    _fewShotCacheTime = Date.now();
+    return examples;
+  } catch {
+    return [];
+  }
+}
+
 /**
  * Calls Gemini 2.5 Flash to extract named entities from `text`.
  * Returns an array of {start, end, type} in the same format as autoDetectNER,
@@ -983,10 +1028,33 @@ function _geminiUpdateStatusDot() {
  *
  * The key is read from localStorage — it never appears in source code.
  */
-async function callGeminiNER(text, apiKey) {
+async function callGeminiNER(text, apiKey, examples = []) {
   // Build the list of entity type names active in this session so the prompt
   // stays aligned with whatever types the user has configured.
   const typeNames = state.entityTypes.map(e => e.name).join(', ');
+
+  // ── Few-shot section (injected when examples are available) ───────────────
+  // Each example comes from a human-corrected annotation pushed via Contribute.
+  // Showing real examples from the same domain is more effective than rules
+  // alone: Gemini can see both what WAS labelled and (by absence) what was not.
+  let fewShotSection = '';
+  if (examples.length) {
+    const formatted = examples.map((ex, i) => {
+      // Truncate very long texts so the prompt stays within token budget.
+      const snippet  = ex.text.length > 500 ? ex.text.slice(0, 500) + '…' : ex.text;
+      const entLines = JSON.stringify(
+        ex.entities.map(e => ({ text: e.text, type: e.label }))
+      );
+      return `Example ${i + 1}:\nText: "${snippet}"\nEntities: ${entLines}`;
+    }).join('\n\n');
+
+    fewShotSection =
+      `=== CORRECTED EXAMPLES — FOLLOW THIS PATTERN EXACTLY ===\n` +
+      `These were annotated and corrected by a human expert in this domain.\n` +
+      `Study them carefully: what IS labelled shows valid entities; what is\n` +
+      `ABSENT from the entity list was deliberately left out (not an entity).\n\n` +
+      formatted + '\n\n';
+  }
 
   const prompt =
     `You are a strict Named Entity Recognition system for Malaysian financial and business news.\n` +
@@ -995,37 +1063,29 @@ async function callGeminiNER(text, apiKey) {
 
     `Entity types: ${typeNames}\n\n` +
 
-    `=== WHAT IS A NAMED ENTITY ===\n` +
-    `COMPANY  — The official registered/recognised name of an organisation.\n` +
+    fewShotSection +
+
+    `=== RULES ===\n` +
+    `COMPANY  — Official registered/recognised name of an organisation.\n` +
     `           ✓ "Petroliam Nasional Bhd"  ✓ "PETRONAS"  ✓ "Abu Dhabi National Oil Co"\n` +
     `           ✓ "Ministry of Finance"  ✓ "Securities Commission"  ✓ "Sarawak government"\n` +
-    `           ✗ "Malaysian energy giant"  (a description, not the company name)\n` +
-    `           ✗ "supply of liquefied natural gas"  (a commodity phrase, not a company)\n` +
-    `           ✗ "it is coordinating with authorities"  (a clause fragment, not an entity)\n` +
-    `           ✗ "the company"  ✗ "a firm"  ✗ "the group"  (pronoun/generic references)\n\n` +
-
-    `LOCATION — A specific named place: country, city, state, region.\n` +
-    `           ✓ "Malaysia"  ✓ "Abu Dhabi"  ✓ "Sarawak"  ✓ "Middle East"\n` +
-    `           ✗ "the region"  ✗ "overseas"  (generic, not a proper name)\n\n` +
-
-    `PEOPLE   — A real person's full proper name.\n` +
+    `           ✗ "Malaysian energy giant"  (descriptor, not the company name)\n` +
+    `           ✗ "supply of liquefied natural gas"  (commodity phrase)\n` +
+    `           ✗ "it is coordinating with authorities"  (clause fragment)\n` +
+    `           ✗ "the company"  ✗ "a firm"  (pronoun/generic references)\n\n` +
+    `LOCATION — Specific named place: country, city, state, region.\n` +
+    `           ✓ "Malaysia"  ✓ "Abu Dhabi"  ✓ "Sarawak"  ✗ "the region"  ✗ "overseas"\n\n` +
+    `PEOPLE   — Real person's full proper name.\n` +
     `           ✓ "Ahmad Zahid Hamidi"  ✗ "the CEO"  ✗ "he"  ✗ "the minister"\n\n` +
-
-    `TIME     — A specific date, year, quarter, or named period.\n` +
-    `           ✓ "March 3"  ✓ "Q1 2024"  ✓ "Tuesday"  ✗ "recently"  ✗ "years"\n\n` +
-
-    `ITEM     — A specific monetary figure or tangible physical asset.\n` +
+    `TIME     — Specific date, year, quarter, or named period.\n` +
+    `           ✓ "March 3"  ✓ "Q1 2024"  ✗ "recently"  ✗ "years"\n\n` +
+    `ITEM     — Specific monetary figure or tangible asset.\n` +
     `           ✓ "RM 500 million"  ✓ "USD 1.2 billion"  ✗ "a large sum"\n\n` +
-
-    `=== STRICT RULES ===\n` +
-    `1. Use the OFFICIAL name of the organisation — strip leading descriptors.\n` +
-    `   Text: "Malaysian energy giant Petroliam Nasional Bhd"\n` +
-    `   ✓ {"text":"Petroliam Nasional Bhd","type":"COMPANY"}\n` +
-    `   ✗ {"text":"Malaysian energy giant Petroliam Nasional Bhd","type":"COMPANY"}\n` +
-    `2. Location + organisation-type word → COMPANY (compound name, not bare location).\n` +
-    `   "Sarawak government" → COMPANY   |   "Sarawak" alone in geographic context → LOCATION\n` +
-    `3. Never extract clauses, sentences, or common noun phrases as entities.\n` +
-    `4. List each distinct entity phrase ONCE; the app finds all occurrences.\n\n` +
+    `1. Use the OFFICIAL organisation name — strip leading descriptors.\n` +
+    `   "Malaysian energy giant Petroliam Nasional Bhd" → {"text":"Petroliam Nasional Bhd","type":"COMPANY"}\n` +
+    `2. Location + org-type word → COMPANY.  "Sarawak government" → COMPANY\n` +
+    `3. Never extract clauses, sentences, or generic noun phrases.\n` +
+    `4. List each distinct phrase ONCE; the app finds all occurrences.\n\n` +
 
     `Output format: [{"text":"exact text as it appears","type":"TYPE"}, ...]\n\n` +
     `Text:\n${text}`;
@@ -1170,7 +1230,9 @@ async function handleAutoLabel() {
     if (btnAuto) { btnAuto.textContent = 'Labeling…'; btnAuto.classList.add('loading'); }
     try {
       const [geminiDets, regexDets] = await Promise.all([
-        callGeminiNER(text, apiKey),
+        // Fetch few-shot examples and Gemini results concurrently.
+        // fetchFewShotExamples() is silent on failure, so it never blocks.
+        fetchFewShotExamples().then(examples => callGeminiNER(text, apiKey, examples)),
         Promise.resolve(autoDetectNER(text)),
       ]);
       detections = _mergeNERDetections(geminiDets, regexDets);
