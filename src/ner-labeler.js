@@ -966,6 +966,27 @@ function autoDetectRelationships(text, entityAnnotations, entityTypes) {
 // Gemini AI Integration
 // ─────────────────────────────────────────────────────────────────────────────
 
+// ── Shared GitHub credentials ─────────────────────────────────────────────────
+// These are baked in so any visitor can contribute annotations without signing
+// up for GitHub or configuring a PAT.  The repository is public; the token
+// needs only the `contents: write` scope on that single repo.
+// Users can still override both values in the AI settings panel — their stored
+// values take priority.
+const _GITHUB_REPO = 'kazekage92/NER-training-data';
+const _GITHUB_PAT  = '';   // ← paste your fine-grained PAT here
+
+/**
+ * Returns the effective {pat, repo} to use for GitHub operations.
+ * User-configured values (saved in localStorage) always win; the shared
+ * constants above are the fallback so Contribute works for every visitor.
+ */
+function _getGitHubCredentials() {
+  return {
+    pat:  localStorage.getItem('github-pat')  || _GITHUB_PAT,
+    repo: localStorage.getItem('github-repo') || _GITHUB_REPO,
+  };
+}
+
 /** Updates the green/grey status dot next to the "AI (Gemini)" heading. */
 function _geminiUpdateStatusDot() {
   const dot = document.getElementById('gemini-status-dot');
@@ -987,16 +1008,17 @@ const _FEW_SHOT_TTL   = 5 * 60 * 1000;   // 5 minutes
  * Results are cached for 5 minutes to avoid a fetch on every Auto-Label click.
  */
 async function fetchFewShotExamples(n = 5) {
-  const pat  = localStorage.getItem('github-pat');
-  const repo = localStorage.getItem('github-repo');
-  if (!pat || !repo) return [];
+  const { pat, repo } = _getGitHubCredentials();
+  if (!repo) return [];   // repo is always set via the shared constant; guard anyway
 
   if (_fewShotCache && Date.now() - _fewShotCacheTime < _FEW_SHOT_TTL)
     return _fewShotCache;
 
   try {
-    const url  = `https://api.github.com/repos/${repo}/contents/training-data/annotations.jsonl?ref=main`;
-    const resp = await fetch(url, { headers: { Authorization: `Bearer ${pat}` } });
+    const url     = `https://api.github.com/repos/${repo}/contents/training-data/annotations.jsonl?ref=main`;
+    // Public repo: no auth needed for reads; include the header only when a PAT is set.
+    const headers = pat ? { Authorization: `Bearer ${pat}` } : {};
+    const resp    = await fetch(url, { headers });
     if (!resp.ok) return [];
 
     const fileData = await resp.json();
@@ -1531,11 +1553,12 @@ function handleKeydown(e) {
 function _githubUpdateStatusDot() {
   const dot = document.getElementById('github-status-dot');
   if (!dot) return;
-  const ready = !!(localStorage.getItem('github-pat') && localStorage.getItem('github-repo'));
+  const { pat, repo } = _getGitHubCredentials();
+  const ready = !!(pat && repo);
   dot.classList.toggle('active', ready);
   dot.title = ready
-    ? `GitHub configured — contributions will go to ${localStorage.getItem('github-repo')}`
-    : 'GitHub PAT and repository not set';
+    ? `Contribute enabled — data goes to ${repo}`
+    : 'GitHub PAT not set';
 }
 
 /**
@@ -1548,10 +1571,9 @@ function _githubUpdateStatusDot() {
  *   PUT  /repos/{owner}/{repo}/contents/{path}  → create/update file
  */
 async function pushTrainingData() {
-  const pat  = localStorage.getItem('github-pat');
-  const repo = localStorage.getItem('github-repo');
+  const { pat, repo } = _getGitHubCredentials();
   if (!pat || !repo)
-    throw new Error('GitHub PAT and repository must be saved in the AI settings panel first.');
+    throw new Error('No GitHub credentials available — paste a PAT in the AI settings panel.');
 
   if (!state.text?.trim() || !state.annotations.length)
     throw new Error('Nothing to contribute — add at least one entity label first.');
