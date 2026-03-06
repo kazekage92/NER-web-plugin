@@ -966,23 +966,21 @@ function autoDetectRelationships(text, entityAnnotations, entityTypes) {
 // Gemini AI Integration
 // ─────────────────────────────────────────────────────────────────────────────
 
-// ── Shared GitHub credentials ─────────────────────────────────────────────────
-// These are baked in so any visitor can contribute annotations without signing
-// up for GitHub or configuring a PAT.  The repository is public; the token
-// needs only the `contents: write` scope on that single repo.
-// Users can still override both values in the AI settings panel — their stored
-// values take priority.
+// ── Shared GitHub configuration ───────────────────────────────────────────────
+// The target repository is public and not a secret, so it is baked in as the
+// default so collaborators don't have to type it.  The PAT is NOT stored here
+// — each collaborator must paste it once via the settings panel; it is saved
+// only in their browser's localStorage and never touches the repository.
 const _GITHUB_REPO = 'kazekage92/NER-training-data';
-const _GITHUB_PAT  = '';   // ← paste your fine-grained PAT here
 
 /**
- * Returns the effective {pat, repo} to use for GitHub operations.
- * User-configured values (saved in localStorage) always win; the shared
- * constants above are the fallback so Contribute works for every visitor.
+ * Returns the effective {pat, repo} for GitHub API calls.
+ * PAT must be provided by the user via the settings panel (localStorage).
+ * Repo falls back to the shared constant if the user hasn't overridden it.
  */
 function _getGitHubCredentials() {
   return {
-    pat:  localStorage.getItem('github-pat')  || _GITHUB_PAT,
+    pat:  localStorage.getItem('github-pat') || '',
     repo: localStorage.getItem('github-repo') || _GITHUB_REPO,
   };
 }
@@ -1554,11 +1552,11 @@ function _githubUpdateStatusDot() {
   const dot = document.getElementById('github-status-dot');
   if (!dot) return;
   const { pat, repo } = _getGitHubCredentials();
-  const ready = !!(pat && repo);
+  const ready = !!pat;   // repo always resolves; only PAT needs user action
   dot.classList.toggle('active', ready);
   dot.title = ready
     ? `Contribute enabled — data goes to ${repo}`
-    : 'GitHub PAT not set';
+    : 'Paste the shared access token in the settings panel to enable Contribute';
 }
 
 /**
