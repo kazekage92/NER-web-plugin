@@ -192,8 +192,16 @@ function bindEvents() {
   document.getElementById('btn-save-github')?.addEventListener('click', () => {
     const pat  = document.getElementById('github-pat-input')?.value.trim();
     const repo = document.getElementById('github-repo-input')?.value.trim();
-    if (pat)  localStorage.setItem('github-pat',  pat);
-    if (repo) localStorage.setItem('github-repo', repo);
+    if (pat) localStorage.setItem('github-pat', pat);
+    if (repo) {
+      // Only accept values that look like "owner/repository" to prevent
+      // accidentally saving API keys or other strings into this field.
+      if (/^[\w.-]+\/[\w.-]+$/.test(repo)) {
+        localStorage.setItem('github-repo', repo);
+      } else {
+        _showToast('Repository must be in "owner/repository" format — not saved.', 'error', 5000);
+      }
+    }
     document.getElementById('github-pat-input').value  = '';
     document.getElementById('github-repo-input').value = '';
     _githubUpdateStatusDot();
@@ -979,9 +987,13 @@ const _GITHUB_REPO = 'kazekage92/NER-training-data';
  * Repo falls back to the shared constant if the user hasn't overridden it.
  */
 function _getGitHubCredentials() {
+  const storedRepo = localStorage.getItem('github-repo') || '';
+  // Reject stored values that don't look like "owner/repo" (e.g. an API key
+  // accidentally pasted into the wrong field) and fall back to the constant.
+  const repo = /^[\w.-]+\/[\w.-]+$/.test(storedRepo) ? storedRepo : _GITHUB_REPO;
   return {
     pat:  localStorage.getItem('github-pat') || '',
-    repo: localStorage.getItem('github-repo') || _GITHUB_REPO,
+    repo,
   };
 }
 
