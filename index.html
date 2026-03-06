@@ -57,14 +57,14 @@
         <div class="panel-section" id="github-settings-section">
           <h3>
             Training Data (GitHub)
-            <span id="github-status-dot" class="gemini-status-dot" title="GitHub not configured"></span>
+            <span id="github-status-dot" class="gemini-status-dot" title="Contribute ready"></span>
           </h3>
           <div class="gemini-key-row">
             <input
               type="password"
               id="github-pat-input"
               class="gemini-key-input"
-              placeholder="GitHub Personal Access Token…"
+              placeholder="GitHub PAT (optional — shared key is pre-configured)"
               autocomplete="off"
               spellcheck="false"
             />
@@ -74,7 +74,7 @@
               type="text"
               id="github-repo-input"
               class="gemini-key-input"
-              placeholder="owner/repository"
+              placeholder="owner/repository (optional override)"
               autocomplete="off"
               spellcheck="false"
             />
@@ -82,7 +82,8 @@
             <button id="btn-clear-github" class="btn btn-sm btn-ghost">Clear</button>
           </div>
           <p class="gemini-key-hint">
-            Token stored in browser only — never committed to git.<br>
+            A shared key is pre-configured — <strong>Contribute ↑</strong> works for everyone out of the box.<br>
+            Enter your own PAT above only if you want to push to a different repository.<br>
             Each correction is appended to <code>training-data/annotations.jsonl</code>.
           </p>
         </div>
