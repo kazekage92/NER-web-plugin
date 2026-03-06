@@ -64,7 +64,7 @@
               type="password"
               id="github-pat-input"
               class="gemini-key-input"
-              placeholder="GitHub PAT (optional — shared key is pre-configured)"
+              placeholder="Paste the shared access token here…"
               autocomplete="off"
               spellcheck="false"
             />
@@ -74,7 +74,7 @@
               type="text"
               id="github-repo-input"
               class="gemini-key-input"
-              placeholder="owner/repository (optional override)"
+              placeholder="owner/repository (pre-configured — leave blank)"
               autocomplete="off"
               spellcheck="false"
             />
@@ -82,8 +82,8 @@
             <button id="btn-clear-github" class="btn btn-sm btn-ghost">Clear</button>
           </div>
           <p class="gemini-key-hint">
-            A shared key is pre-configured — <strong>Contribute ↑</strong> works for everyone out of the box.<br>
-            Enter your own PAT above only if you want to push to a different repository.<br>
+            Ask the project owner for the shared access token and paste it above.<br>
+            Saved in your browser only — never committed to git. The repository field is pre-configured; leave it blank.<br>
             Each correction is appended to <code>training-data/annotations.jsonl</code>.
           </p>
         </div>
