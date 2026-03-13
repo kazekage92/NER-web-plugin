@@ -131,6 +131,7 @@ function init() {
 
   loadFromStorage();
   bindEvents();
+  bindNamecardEvents();
   render();
 }
 
@@ -3475,6 +3476,473 @@ function flashInput(el, msg) {
     el.style.borderColor = '';
     el.title = '';
   }, 1800);
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Namecard Scanner
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Entity types specific to business/name cards.
+ * Each has a fixed colour so cards look consistent.
+ */
+const NAMECARD_ENTITY_FIELDS = [
+  { key: 'NAME',    label: 'Name',       color: '#5b9bd5', icon: '👤' },
+  { key: 'COMPANY', label: 'Company',    color: '#4a90d9', icon: '🏢' },
+  { key: 'JOB_TITLE', label: 'Job Title', color: '#e07b54', icon: '💼' },
+  { key: 'EMAIL',   label: 'Email',      color: '#22b8cf', icon: '✉️'  },
+  { key: 'PHONE',   label: 'Phone',      color: '#5ab86c', icon: '📞' },
+  { key: 'ADDRESS', label: 'Address',    color: '#c97fd4', icon: '📍' },
+  { key: 'WEBSITE', label: 'Website',    color: '#e0c454', icon: '🌐' },
+  { key: 'SOCIAL',  label: 'Social',     color: '#f07f7f', icon: '🔗' },
+];
+
+/** Holds the last extracted namecard data { fields: {KEY: string[]}, rawText: string } */
+let _namecardData = null;
+
+/** Currently selected tab: 'text' | 'image' */
+let _namecardTab = 'text';
+
+/** Base-64 data URL of the uploaded namecard image (null if none) */
+let _namecardImageDataUrl = null;
+
+// ── Gemini Namecard Extraction ────────────────────────────────────────────────
+
+/**
+ * Calls Gemini to extract structured contact fields from namecard content.
+ * Supports both plain text and base-64 image inputs.
+ *
+ * @param {string}      apiKey
+ * @param {string|null} text          Plain text from the card (may be null when image is supplied)
+ * @param {string|null} imageDataUrl  Base-64 data URL of the card image (may be null)
+ * @returns {Promise<{fields: Object<string,string[]>, rawText: string}>}
+ */
+async function callGeminiNamecard(apiKey, text, imageDataUrl) {
+  const fieldList = NAMECARD_ENTITY_FIELDS.map(f => `${f.key} — ${f.label}`).join('\n');
+
+  const prompt =
+    `You are a business namecard / business card information extractor.\n` +
+    `Extract ALL contact information from the namecard content provided.\n` +
+    `Return ONLY a minified JSON object — no explanation, no markdown.\n\n` +
+    `Extract these fields (use the exact key names shown):\n${fieldList}\n\n` +
+    `Rules:\n` +
+    `NAME     — Full person name(s) on the card. E.g. "John Smith", "Dr. Siti Aminah binti Hassan"\n` +
+    `COMPANY  — Organisation or company name. E.g. "Acme Corp Sdn Bhd", "Ministry of Finance"\n` +
+    `JOB_TITLE — Role or designation. E.g. "Senior Software Engineer", "CEO", "Sales Manager"\n` +
+    `EMAIL    — All e-mail addresses found.\n` +
+    `PHONE    — All phone, mobile, fax numbers. Include the label if present (e.g. "M: +60 12-345 6789").\n` +
+    `ADDRESS  — Full physical address if present.\n` +
+    `WEBSITE  — URLs / domains. E.g. "www.acme.com"\n` +
+    `SOCIAL   — Social media handles or profile URLs. E.g. "@john_smith", "linkedin.com/in/johnsmith"\n\n` +
+    `Output format:\n` +
+    `{"NAME":["value"],"COMPANY":["value"],"JOB_TITLE":["value"],"EMAIL":["v1","v2"],` +
+    `"PHONE":["v1","v2"],"ADDRESS":["value"],"WEBSITE":["value"],"SOCIAL":["v1"]}\n` +
+    `- Each field is an array (may be empty []).\n` +
+    `- Include all values found; do not omit duplicates under different labels.\n` +
+    `- If a field is not present on the card, use an empty array [].\n\n`;
+
+  // Build Gemini contents — text-only or multimodal (text + image)
+  let parts;
+  if (imageDataUrl) {
+    const [meta, b64] = imageDataUrl.split(',');
+    const mimeType    = meta.replace('data:', '').replace(';base64', '');
+    parts = [
+      { inlineData: { mimeType, data: b64 } },
+      { text: prompt + (text ? `\n\nAdditional typed text from the card:\n${text}` : '') },
+    ];
+  } else {
+    parts = [{ text: prompt + `\nNamecard text:\n${text}` }];
+  }
+
+  const resp = await fetch(
+    `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${encodeURIComponent(apiKey)}`,
+    {
+      method:  'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        contents:         [{ parts }],
+        generationConfig: { temperature: 0.1, responseMimeType: 'application/json' },
+      }),
+    }
+  );
+
+  if (!resp.ok) {
+    const err = await resp.text().catch(() => resp.statusText);
+    throw new Error(`Gemini ${resp.status}: ${err}`);
+  }
+
+  const data   = await resp.json();
+  const rawOut = data.candidates?.[0]?.content?.parts?.[0]?.text ?? '{}';
+  const parsed = JSON.parse(rawOut);
+
+  // Normalise: ensure every key is present and values are arrays of strings
+  const fields = {};
+  for (const f of NAMECARD_ENTITY_FIELDS) {
+    const val = parsed[f.key];
+    fields[f.key] = Array.isArray(val)
+      ? val.map(v => String(v).trim()).filter(Boolean)
+      : (val ? [String(val).trim()] : []);
+  }
+
+  // Build a plain-text representation for "Load into NER"
+  const lines = [];
+  for (const f of NAMECARD_ENTITY_FIELDS) {
+    for (const v of fields[f.key]) lines.push(v);
+  }
+  const rawText = text || lines.join('\n');
+
+  return { fields, rawText };
+}
+
+// ── Fallback regex extraction (no Gemini key) ─────────────────────────────────
+
+/**
+ * Simple regex-based namecard extraction used when no Gemini key is configured.
+ * Less accurate than Gemini but works offline/without API access.
+ */
+function extractNamecardRegex(text) {
+  const fields = {};
+  for (const f of NAMECARD_ENTITY_FIELDS) fields[f.key] = [];
+
+  const lines = text.split(/\r?\n/).map(l => l.trim()).filter(Boolean);
+
+  const EMAIL_RE   = /[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}/g;
+  const PHONE_RE   = /(?:\+?\d[\d\s\-().]{6,}\d)/g;
+  const URL_RE     = /(?:https?:\/\/|www\.)[^\s,]+/gi;
+  const SOCIAL_RE  = /@[\w.]+/g;
+
+  for (const line of lines) {
+    const emails  = line.match(EMAIL_RE)  || [];
+    const phones  = line.match(PHONE_RE)  || [];
+    const urls    = line.match(URL_RE)    || [];
+    const socials = line.match(SOCIAL_RE) || [];
+
+    emails.forEach(v  => { if (!fields.EMAIL.includes(v))   fields.EMAIL.push(v);   });
+    phones.forEach(v  => { if (!fields.PHONE.includes(v))   fields.PHONE.push(v);   });
+    urls.forEach(v    => { if (!fields.WEBSITE.includes(v)) fields.WEBSITE.push(v); });
+    socials.forEach(v => { if (!fields.SOCIAL.includes(v))  fields.SOCIAL.push(v);  });
+  }
+
+  // Heuristic: first line that has no digits and no special chars → NAME
+  for (const line of lines) {
+    if (/^[A-Za-z\s.,''-]{3,}$/.test(line) && fields.NAME.length === 0) {
+      fields.NAME.push(line);
+    }
+  }
+
+  return { fields, rawText: text };
+}
+
+// ── Modal UI helpers ──────────────────────────────────────────────────────────
+
+function _namecardShowModal() {
+  const overlay = document.getElementById('namecard-overlay');
+  if (overlay) overlay.classList.remove('hidden');
+  _namecardShowInputSection();
+}
+
+function _namecardHideModal() {
+  const overlay = document.getElementById('namecard-overlay');
+  if (overlay) overlay.classList.add('hidden');
+}
+
+function _namecardShowInputSection() {
+  document.getElementById('namecard-input-section')?.classList.remove('hidden');
+  document.getElementById('namecard-results-section')?.classList.add('hidden');
+}
+
+function _namecardShowResultsSection() {
+  document.getElementById('namecard-input-section')?.classList.add('hidden');
+  document.getElementById('namecard-results-section')?.classList.remove('hidden');
+}
+
+function _namecardSwitchTab(tab) {
+  _namecardTab = tab;
+  document.querySelectorAll('.namecard-tab').forEach(btn => {
+    btn.classList.toggle('active', btn.dataset.tab === tab);
+    btn.setAttribute('aria-selected', String(btn.dataset.tab === tab));
+  });
+  document.querySelectorAll('.namecard-tab-panel').forEach(panel => {
+    panel.classList.toggle('hidden', panel.id !== `panel-${tab}`);
+  });
+}
+
+/** Renders extracted data into the visual card preview and fields table. */
+function _namecardRenderResults(data) {
+  _namecardData = data;
+  const { fields } = data;
+
+  // ── Visual card preview ──────────────────────────────────────────────────
+  const ncName    = document.getElementById('nc-name');
+  const ncTitle   = document.getElementById('nc-title');
+  const ncCompany = document.getElementById('nc-company');
+  const ncFields  = document.getElementById('nc-fields');
+
+  if (ncName)    ncName.textContent    = fields.NAME?.[0]      || '';
+  if (ncTitle)   ncTitle.textContent   = fields.JOB_TITLE?.[0] || '';
+  if (ncCompany) ncCompany.textContent = fields.COMPANY?.[0]   || '';
+
+  if (ncFields) {
+    ncFields.innerHTML = '';
+    const contactFields = ['EMAIL','PHONE','ADDRESS','WEBSITE','SOCIAL'];
+    for (const key of contactFields) {
+      const values = fields[key] || [];
+      const meta   = NAMECARD_ENTITY_FIELDS.find(f => f.key === key);
+      for (const val of values) {
+        const row = document.createElement('div');
+        row.className = 'nc-field-row';
+        row.innerHTML =
+          `<span class="nc-field-icon">${meta.icon}</span>` +
+          `<span class="nc-field-val">${escapeHtml(val)}</span>`;
+        ncFields.appendChild(row);
+      }
+    }
+  }
+
+  // ── Structured fields table ───────────────────────────────────────────────
+  const table = document.getElementById('namecard-fields-table');
+  if (table) {
+    table.innerHTML = '';
+    for (const f of NAMECARD_ENTITY_FIELDS) {
+      const values = fields[f.key] || [];
+      if (!values.length) continue;
+      const row = document.createElement('div');
+      row.className = 'nc-table-row';
+      row.innerHTML =
+        `<span class="nc-table-label" style="color:${f.color}">${escapeHtml(f.label)}</span>` +
+        `<span class="nc-table-values">${values.map(v => `<span class="nc-table-value">${escapeHtml(v)}</span>`).join('')}</span>`;
+      table.appendChild(row);
+    }
+  }
+
+  _namecardShowResultsSection();
+}
+
+// ── Scan handler ──────────────────────────────────────────────────────────────
+
+async function handleNamecardScan() {
+  const apiKey = localStorage.getItem('gemini-api-key');
+  const text   = document.getElementById('namecard-text-input')?.value.trim() || '';
+
+  if (!text && !_namecardImageDataUrl) {
+    _showToast('Please paste namecard text or upload an image first.', 'error', 4000);
+    return;
+  }
+
+  const btn = document.getElementById('btn-namecard-scan');
+  if (btn) { btn.textContent = 'Scanning…'; btn.classList.add('loading'); btn.disabled = true; }
+
+  try {
+    let result;
+    if (apiKey) {
+      result = await callGeminiNamecard(apiKey, text || null, _namecardImageDataUrl);
+    } else {
+      if (_namecardImageDataUrl) {
+        _showToast('A Gemini API key is required for image scanning. Falling back to text extraction.', 'error', 5000);
+      }
+      result = extractNamecardRegex(text);
+    }
+    _namecardRenderResults(result);
+  } catch (err) {
+    console.error('Namecard scan error:', err);
+    _showToast(`Scan failed: ${err.message}`, 'error', 6000);
+  } finally {
+    if (btn) { btn.textContent = 'Scan & Extract'; btn.classList.remove('loading'); btn.disabled = false; }
+  }
+}
+
+// ── Export helpers ────────────────────────────────────────────────────────────
+
+/** Exports the extracted data as a vCard 3.0 (.vcf) file. */
+function exportNamecardVCard() {
+  if (!_namecardData) return;
+  const { fields } = _namecardData;
+
+  const lines = ['BEGIN:VCARD', 'VERSION:3.0'];
+
+  const name = fields.NAME?.[0] || '';
+  if (name) {
+    // FN = formatted name; N = structured name (Last;First;Middle;Prefix;Suffix)
+    lines.push(`FN:${name}`);
+    const parts = name.trim().split(/\s+/);
+    const last  = parts.length > 1 ? parts[parts.length - 1] : '';
+    const first = parts.length > 1 ? parts.slice(0, -1).join(' ') : parts[0];
+    lines.push(`N:${last};${first};;;`);
+  }
+
+  for (const title of (fields.JOB_TITLE || [])) lines.push(`TITLE:${title}`);
+  for (const org   of (fields.COMPANY   || [])) lines.push(`ORG:${org}`);
+
+  (fields.EMAIL   || []).forEach((v, i) => lines.push(`EMAIL;TYPE=${i === 0 ? 'WORK' : 'OTHER'}:${v}`));
+  (fields.PHONE   || []).forEach((v, i) => lines.push(`TEL;TYPE=${i === 0 ? 'WORK' : 'OTHER'}:${v}`));
+  (fields.ADDRESS || []).forEach(v        => lines.push(`ADR;TYPE=WORK:;;${v};;;;`));
+  (fields.WEBSITE || []).forEach(v        => lines.push(`URL:${v}`));
+  (fields.SOCIAL  || []).forEach(v        => lines.push(`X-SOCIALPROFILE:${v}`));
+
+  lines.push('END:VCARD');
+
+  const blob = new Blob([lines.join('\r\n')], { type: 'text/vcard' });
+  const url  = URL.createObjectURL(blob);
+  const a    = document.createElement('a');
+  a.href     = url;
+  a.download = `${(fields.NAME?.[0] || 'namecard').replace(/[^a-z0-9]/gi, '_')}.vcf`;
+  a.click();
+  URL.revokeObjectURL(url);
+}
+
+/** Exports the extracted data as a JSON file. */
+function exportNamecardJSON() {
+  if (!_namecardData) return;
+  const { fields } = _namecardData;
+  const out = { scannedAt: new Date().toISOString(), contact: {} };
+  for (const f of NAMECARD_ENTITY_FIELDS) {
+    if (fields[f.key]?.length) out.contact[f.label] = fields[f.key];
+  }
+  downloadJSON(out, `${(fields.NAME?.[0] || 'namecard').replace(/[^a-z0-9]/gi, '_')}.json`);
+}
+
+/** Loads the extracted text into the main NER labeler and closes the modal. */
+function loadNamecardIntoNER() {
+  if (!_namecardData) return;
+  const { fields, rawText } = _namecardData;
+
+  // Switch entity types to namecard-relevant set
+  const NAMECARD_NER_TYPES = [
+    { name: 'Name',      color: '#5b9bd5' },
+    { name: 'Company',   color: '#4a90d9' },
+    { name: 'Job Title', color: '#e07b54' },
+    { name: 'Email',     color: '#22b8cf' },
+    { name: 'Phone',     color: '#5ab86c' },
+    { name: 'Address',   color: '#c97fd4' },
+    { name: 'Website',   color: '#e0c454' },
+    { name: 'Social',    color: '#f07f7f' },
+  ];
+
+  // Build flat text from fields (one value per line, labelled)
+  const textLines = [];
+  for (const f of NAMECARD_ENTITY_FIELDS) {
+    for (const v of (fields[f.key] || [])) {
+      textLines.push(v);
+    }
+  }
+  const cardText = textLines.join('\n') || rawText;
+
+  // Reset entity types to namecard set (ask confirmation if annotations exist)
+  if (state.annotations.length > 0) {
+    confirm(
+      'Loading namecard data will replace your current entity types. Continue?',
+      () => _doLoadNamecardIntoNER(cardText, NAMECARD_NER_TYPES)
+    );
+  } else {
+    _doLoadNamecardIntoNER(cardText, NAMECARD_NER_TYPES);
+  }
+}
+
+function _doLoadNamecardIntoNER(cardText, types) {
+  // Replace entity types with namecard types
+  state.entityTypes      = types.map(t => ({ id: uid(), name: t.name, color: t.color }));
+  state.annotations      = [];
+  state.relAnnotations   = [];
+  state.attrAnnotations  = [];
+  state.activeEntityTypeId = null;
+
+  // Put the text into the text input
+  DOM.rawTextInput.value = cardText;
+  DOM.charCount.textContent = `${cardText.length} characters`;
+  state.mode = 'input';
+
+  render();
+  saveToStorage();
+  _namecardHideModal();
+  _showToast('Namecard loaded — click Auto-Label or Start Labeling to annotate.', 'success', 4000);
+}
+
+// ── Image upload helpers ──────────────────────────────────────────────────────
+
+function _namecardHandleImageFile(file) {
+  if (!file || !file.type.startsWith('image/')) return;
+  const reader = new FileReader();
+  reader.onload = e => {
+    _namecardImageDataUrl = e.target.result;
+    const img  = document.getElementById('namecard-image-preview');
+    const wrap = document.getElementById('namecard-image-preview-wrap');
+    const zone = document.getElementById('namecard-drop-zone');
+    if (img)  img.src = _namecardImageDataUrl;
+    if (wrap) wrap.classList.remove('hidden');
+    if (zone) zone.classList.add('hidden');
+  };
+  reader.readAsDataURL(file);
+}
+
+// ── Event bindings ────────────────────────────────────────────────────────────
+
+function bindNamecardEvents() {
+  // Open modal
+  document.getElementById('btn-namecard-scanner')?.addEventListener('click', _namecardShowModal);
+
+  // Close modal (button or outside click)
+  document.getElementById('btn-namecard-close')?.addEventListener('click', _namecardHideModal);
+  document.getElementById('namecard-overlay')?.addEventListener('click', e => {
+    if (e.target === e.currentTarget) _namecardHideModal();
+  });
+
+  // Tab switching
+  document.querySelectorAll('.namecard-tab').forEach(btn => {
+    btn.addEventListener('click', () => _namecardSwitchTab(btn.dataset.tab));
+  });
+
+  // Scan button
+  document.getElementById('btn-namecard-scan')?.addEventListener('click', handleNamecardScan);
+
+  // Export buttons
+  document.getElementById('btn-namecard-export-vcf')?.addEventListener('click',  exportNamecardVCard);
+  document.getElementById('btn-namecard-export-json')?.addEventListener('click', exportNamecardJSON);
+  document.getElementById('btn-namecard-load-ner')?.addEventListener('click',    loadNamecardIntoNER);
+  document.getElementById('btn-namecard-rescan')?.addEventListener('click', () => {
+    _namecardShowInputSection();
+  });
+
+  // Image upload — click
+  document.getElementById('namecard-drop-zone')?.addEventListener('click', () => {
+    document.getElementById('namecard-image-input')?.click();
+  });
+  document.getElementById('namecard-drop-zone')?.addEventListener('keydown', e => {
+    if (e.key === 'Enter' || e.key === ' ') document.getElementById('namecard-image-input')?.click();
+  });
+  document.getElementById('namecard-image-input')?.addEventListener('change', e => {
+    _namecardHandleImageFile(e.target.files[0]);
+  });
+
+  // Image upload — drag-and-drop
+  const dropZone = document.getElementById('namecard-drop-zone');
+  if (dropZone) {
+    dropZone.addEventListener('dragover', e => { e.preventDefault(); dropZone.classList.add('drag-over'); });
+    dropZone.addEventListener('dragleave', ()  => dropZone.classList.remove('drag-over'));
+    dropZone.addEventListener('drop', e => {
+      e.preventDefault();
+      dropZone.classList.remove('drag-over');
+      _namecardHandleImageFile(e.dataTransfer.files[0]);
+    });
+  }
+
+  // Clear image
+  document.getElementById('btn-namecard-clear-image')?.addEventListener('click', () => {
+    _namecardImageDataUrl = null;
+    const inp  = document.getElementById('namecard-image-input');
+    const wrap = document.getElementById('namecard-image-preview-wrap');
+    const zone = document.getElementById('namecard-drop-zone');
+    if (inp)  inp.value = '';
+    if (wrap) wrap.classList.add('hidden');
+    if (zone) zone.classList.remove('hidden');
+  });
+
+  // Keyboard: Escape closes the modal
+  document.addEventListener('keydown', e => {
+    if (e.key === 'Escape') {
+      const overlay = document.getElementById('namecard-overlay');
+      if (overlay && !overlay.classList.contains('hidden')) _namecardHideModal();
+    }
+  });
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

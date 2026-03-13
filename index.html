@@ -12,6 +12,7 @@
     <header class="app-header">
       <h1 class="app-title">NER Entity Labeling Plugin</h1>
       <div class="header-actions">
+        <button id="btn-namecard-scanner" class="btn btn-namecard" title="Scan a business namecard and extract contact entities">Namecard Scanner</button>
         <button id="btn-import" class="btn btn-secondary" title="Import JSON">Import</button>
         <button id="btn-export" class="btn btn-secondary" title="Export labeled data as JSON">Export JSON</button>
         <button id="btn-export-xlsx" class="btn btn-secondary" title="Export relationships and entities as Excel workbook">Export XLSX</button>
@@ -189,6 +190,80 @@
       <div class="confirm-actions">
         <button id="confirm-ok" class="btn btn-danger">Confirm</button>
         <button id="confirm-cancel" class="btn btn-ghost">Cancel</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ===== Namecard Scanner Modal ===== -->
+  <div id="namecard-overlay" class="namecard-overlay hidden" role="dialog" aria-modal="true" aria-labelledby="namecard-modal-title">
+    <div class="namecard-modal">
+      <div class="namecard-modal-header">
+        <h2 id="namecard-modal-title">Namecard Scanner</h2>
+        <button id="btn-namecard-close" class="btn btn-ghost btn-sm" aria-label="Close">✕</button>
+      </div>
+
+      <!-- Input section -->
+      <div class="namecard-input-section" id="namecard-input-section">
+        <p class="namecard-hint">
+          Paste namecard text below — or upload a namecard image for AI-powered OCR extraction.
+          Requires a Gemini API key saved in Settings.
+        </p>
+
+        <!-- Tabs: text vs image -->
+        <div class="namecard-tabs" role="tablist">
+          <button class="namecard-tab active" id="tab-text" role="tab" aria-selected="true" data-tab="text">Paste Text</button>
+          <button class="namecard-tab" id="tab-image" role="tab" aria-selected="false" data-tab="image">Upload Image</button>
+        </div>
+
+        <!-- Text input tab -->
+        <div class="namecard-tab-panel" id="panel-text">
+          <textarea
+            id="namecard-text-input"
+            class="namecard-textarea"
+            placeholder="Paste the namecard text here…&#10;&#10;John Smith&#10;Senior Software Engineer&#10;Acme Corp Sdn Bhd&#10;john.smith@acme.com&#10;+60 12-345 6789&#10;acme.com"
+            spellcheck="false"
+          ></textarea>
+        </div>
+
+        <!-- Image upload tab -->
+        <div class="namecard-tab-panel hidden" id="panel-image">
+          <label class="namecard-drop-zone" id="namecard-drop-zone" tabindex="0">
+            <input type="file" id="namecard-image-input" accept="image/*" style="display:none" />
+            <div class="namecard-drop-icon">🪪</div>
+            <p class="namecard-drop-label">Click or drag-and-drop a namecard image</p>
+            <p class="namecard-drop-hint">JPG, PNG, WEBP — processed via Gemini Vision</p>
+          </label>
+          <div id="namecard-image-preview-wrap" class="namecard-image-preview-wrap hidden">
+            <img id="namecard-image-preview" class="namecard-image-preview" alt="Namecard preview" />
+            <button id="btn-namecard-clear-image" class="btn btn-ghost btn-sm namecard-clear-img">Clear</button>
+          </div>
+        </div>
+
+        <div class="namecard-input-footer">
+          <button id="btn-namecard-scan" class="btn btn-primary">Scan &amp; Extract</button>
+        </div>
+      </div>
+
+      <!-- Results section (hidden until scan completes) -->
+      <div class="namecard-results-section hidden" id="namecard-results-section">
+        <!-- Visual namecard preview -->
+        <div class="namecard-card-preview" id="namecard-card-preview">
+          <div class="nc-name"    id="nc-name"></div>
+          <div class="nc-title"   id="nc-title"></div>
+          <div class="nc-company" id="nc-company"></div>
+          <div class="nc-divider"></div>
+          <div class="nc-fields"  id="nc-fields"></div>
+        </div>
+
+        <!-- Structured fields table -->
+        <div class="namecard-fields-table" id="namecard-fields-table"></div>
+
+        <div class="namecard-results-footer">
+          <button id="btn-namecard-export-vcf"  class="btn btn-secondary">Export vCard (.vcf)</button>
+          <button id="btn-namecard-export-json" class="btn btn-secondary">Export JSON</button>
+          <button id="btn-namecard-load-ner"    class="btn btn-primary"   title="Load extracted text into the NER labeler for annotation">Load into NER</button>
+          <button id="btn-namecard-rescan"      class="btn btn-ghost">Rescan</button>
+        </div>
       </div>
     </div>
   </div>

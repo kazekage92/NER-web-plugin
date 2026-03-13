@@ -931,3 +931,254 @@ kbd {
 .btn-contribute:hover:not(:disabled) { background: #15803d; }
 .btn-contribute:disabled { opacity: 0.45; cursor: not-allowed; }
 .btn-contribute.loading { opacity: 0.6; cursor: wait; pointer-events: none; }
+
+/* ===== Namecard Scanner button ===== */
+.btn-namecard {
+  background: #7c3aed;
+  color: #fff;
+  border: none;
+  font-weight: 600;
+  letter-spacing: 0.01em;
+}
+.btn-namecard:hover:not(:disabled) { background: #6d28d9; }
+
+/* ===== Namecard Scanner modal overlay ===== */
+.namecard-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0,0,0,.65);
+  z-index: 200;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 16px;
+}
+
+.namecard-modal {
+  background: var(--bg-panel);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-md);
+  width: 100%;
+  max-width: 600px;
+  max-height: 90vh;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.namecard-modal-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 14px 18px;
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+}
+.namecard-modal-header h2 {
+  font-size: 1rem;
+  font-weight: 700;
+  color: var(--text-primary);
+}
+
+/* ── Input section ── */
+.namecard-input-section {
+  padding: 16px 18px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  overflow-y: auto;
+  flex: 1;
+}
+
+.namecard-hint {
+  font-size: .82rem;
+  color: var(--text-secondary);
+  line-height: 1.5;
+}
+
+/* Tabs */
+.namecard-tabs {
+  display: flex;
+  gap: 4px;
+  border-bottom: 1px solid var(--border);
+}
+.namecard-tab {
+  background: none;
+  border: none;
+  border-bottom: 2px solid transparent;
+  padding: 6px 14px;
+  font-size: .85rem;
+  font-weight: 500;
+  color: var(--text-secondary);
+  cursor: pointer;
+  margin-bottom: -1px;
+  transition: color var(--transition), border-color var(--transition);
+}
+.namecard-tab:hover { color: var(--text-primary); }
+.namecard-tab.active {
+  color: var(--accent);
+  border-bottom-color: var(--accent);
+}
+
+/* Textarea */
+.namecard-textarea {
+  width: 100%;
+  min-height: 150px;
+  padding: 10px 12px;
+  font-size: .85rem;
+  font-family: var(--font-mono);
+  background: var(--bg-input);
+  color: var(--text-primary);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  resize: vertical;
+  outline: none;
+  line-height: 1.6;
+}
+.namecard-textarea:focus { border-color: var(--border-focus); }
+
+/* Drop zone */
+.namecard-drop-zone {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 32px 16px;
+  border: 2px dashed var(--border);
+  border-radius: var(--radius-md);
+  cursor: pointer;
+  transition: border-color var(--transition), background var(--transition);
+  text-align: center;
+}
+.namecard-drop-zone:hover,
+.namecard-drop-zone.drag-over {
+  border-color: var(--accent);
+  background: rgba(91,106,240,.07);
+}
+.namecard-drop-icon  { font-size: 2rem; }
+.namecard-drop-label { font-size: .88rem; color: var(--text-primary); }
+.namecard-drop-hint  { font-size: .78rem; color: var(--text-muted); }
+
+/* Image preview */
+.namecard-image-preview-wrap {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 8px;
+}
+.namecard-image-preview {
+  max-width: 100%;
+  max-height: 200px;
+  border-radius: var(--radius-md);
+  border: 1px solid var(--border);
+  object-fit: contain;
+  background: var(--bg-input);
+}
+.namecard-clear-img { align-self: flex-start; }
+
+.namecard-input-footer {
+  display: flex;
+  justify-content: flex-end;
+}
+
+/* ── Results section ── */
+.namecard-results-section {
+  padding: 16px 18px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  overflow-y: auto;
+  flex: 1;
+}
+
+/* Visual namecard preview */
+.namecard-card-preview {
+  background: linear-gradient(135deg, #1e2130 0%, #252839 100%);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  padding: 18px 20px;
+  min-height: 100px;
+}
+.nc-name {
+  font-size: 1.2rem;
+  font-weight: 700;
+  color: var(--text-primary);
+  line-height: 1.3;
+}
+.nc-title {
+  font-size: .85rem;
+  color: #a78bfa;
+  margin-top: 2px;
+}
+.nc-company {
+  font-size: .88rem;
+  color: var(--text-secondary);
+  margin-top: 1px;
+}
+.nc-divider {
+  height: 1px;
+  background: var(--border);
+  margin: 10px 0;
+}
+.nc-fields {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.nc-field-row {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  font-size: .82rem;
+  color: var(--text-secondary);
+}
+.nc-field-icon { font-size: .75rem; flex-shrink: 0; }
+.nc-field-val  { word-break: break-all; }
+
+/* Structured fields table */
+.namecard-fields-table {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.nc-table-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  font-size: .83rem;
+}
+.nc-table-label {
+  flex-shrink: 0;
+  width: 80px;
+  font-weight: 600;
+  font-size: .78rem;
+  text-transform: uppercase;
+  letter-spacing: .04em;
+}
+.nc-table-values {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+.nc-table-value {
+  background: var(--bg-input);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 2px 8px;
+  font-size: .8rem;
+  color: var(--text-primary);
+  word-break: break-all;
+}
+
+/* Results footer */
+.namecard-results-footer {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  justify-content: flex-end;
+  border-top: 1px solid var(--border);
+  padding-top: 12px;
+}
